@@ -6,11 +6,13 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from koreanstocks.core import config
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["models"])
 
-# params.json 파일이 저장된 디렉토리 (절대 경로)
-PARAMS_DIR = Path(__file__).parents[4] / "models" / "saved" / "model_params"
+# params.json 파일이 저장된 디렉토리 — BASE_DIR 기준 (pipx/PyPI 설치 환경 호환)
+PARAMS_DIR = Path(config.BASE_DIR) / "models" / "saved" / "model_params"
 
 _MODEL_CONFIGS = [
     ("random_forest",       "랜덤 포레스트",      "random_forest_params.json"),
