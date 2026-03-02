@@ -10,6 +10,7 @@ from koreanstocks.api.routers import (
     watchlist,
     backtest,
     market,
+    models,
 )
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
@@ -18,7 +19,7 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 def create_app() -> FastAPI:
     app = FastAPI(
         title="KoreanStocks API",
-        version="0.3.1",
+        version="0.3.2",
         description="KOSPI·KOSDAQ 종목 자동 스크리닝 + 텔레그램 리포트 플랫폼",
     )
 
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlist.router, prefix="/api")
     app.include_router(backtest.router, prefix="/api")
     app.include_router(market.router, prefix="/api")
+    app.include_router(models.router, prefix="/api")
 
     # Static 파일 마운트 (Reveal.js + 대시보드)
     if STATIC_DIR.exists():

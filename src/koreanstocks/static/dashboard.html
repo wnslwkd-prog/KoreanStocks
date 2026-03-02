@@ -18,6 +18,7 @@
   <button class="tab-btn" data-tab="recommendations">AI 추천</button>
   <button class="tab-btn" data-tab="backtest">백테스트</button>
   <button class="tab-btn" data-tab="settings">설정</button>
+  <button class="tab-btn" data-tab="model">모델 신뢰도</button>
   <div class="nav-right">
     <a href="/">브리핑</a>
     <a href="/docs">API</a>
@@ -407,12 +408,21 @@
 
     <div class="card">
       <div class="card-title">ℹ️ 정보</div>
-      <div class="kv-row"><span class="kv-key">버전</span><span class="kv-val">v0.3.1</span></div>
+      <div class="kv-row"><span class="kv-key">버전</span><span class="kv-val">v0.3.2</span></div>
       <div class="kv-row"><span class="kv-key">API 문서</span><span class="kv-val"><a href="/docs">/docs (Swagger UI)</a></span></div>
       <div class="kv-row"><span class="kv-key">브리핑</span><span class="kv-val"><a href="/">/ (Reveal.js 슬라이드)</a></span></div>
     </div>
 
   </div><!-- /tab-settings -->
+
+  <!-- ══════════════════════════════════════════════════════════
+       Tab 6 — 모델 신뢰도
+  ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-model">
+    <div id="model-health-wrap">
+      <span style="color:var(--muted)">탭을 클릭하면 로드됩니다…</span>
+    </div>
+  </div><!-- /tab-model -->
 
 </div><!-- /main -->
 
@@ -428,6 +438,6 @@
 
 <!-- Chart.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/dashboard.js?v=2"></script>
 </body>
 </html>

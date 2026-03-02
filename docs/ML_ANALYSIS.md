@@ -1,6 +1,6 @@
 # ML 분석 시스템 기술 문서
 
-> Korean Stocks AI/ML Analysis System `v0.3.1`
+> Korean Stocks AI/ML Analysis System `v0.3.2`
 > 최종 업데이트: 2026-03-02
 
 ---
@@ -75,7 +75,9 @@ df_all = df_all.dropna(subset=['target'])     # 중간 50% 제외
 
 ## 3. 피처 엔지니어링
 
-총 **25개 피처** — 순수 기술지표 + 거시경제 (PyKrx 펀더멘털·수급 제외)
+총 **18개 피처** — 순수 기술지표 + 거시경제 (PyKrx 펀더멘털·수급 제외)
+
+> 제거된 피처 (v0.3.2): `sqzmi`, `vol_change`, `macd_diff_change`, `obv_change`, `rsi_mfi_div`, `candle_body`, `rs_vs_mkt_1m` — 3모델 합산 중요도 최하위(<2%)
 
 ### 3-1. 피처 목록
 
@@ -85,25 +87,18 @@ df_all = df_all.dropna(subset=['target'])     # 중간 50% 제외
 | | `adx` | ADX 추세 강도 (0~100) |
 | | `adx_di_diff` | DI+ − DI− (추세 방향, 양수=상승) |
 | | `bb_width` | BB 너비 / BB 중심선 |
-| 시장 상대강도 (2) | `rs_vs_mkt_3m` | 3개월 수익률 − 벤치마크 3개월 |
-| | `rs_vs_mkt_1m` | 1개월 수익률 − 벤치마크 1개월 |
-| 모멘텀 팩터 (4) | `high_52w_ratio` | 종가 / 52주 고점 |
+| 시장 상대강도 (1) | `rs_vs_mkt_3m` | 3개월 수익률 − 벤치마크 3개월 |
+| 모멘텀 팩터 (3) | `high_52w_ratio` | 종가 / 52주 고점 |
 | | `mom_accel` | return_1m − (return_3m / 3) |
 | | `macd_diff` | MACD − Signal (히스토그램) |
-| | `macd_diff_change` | MACD diff 전일 대비 변화량 |
 | 추세 기울기 (2) | `macd_slope_5d` | MACD diff 5일 기울기 |
 | | `price_sma_5_ratio` | 종가 / SMA5 |
 | finta 지표 (4) | `fisher` | Fisher Transform (클립 ±5) |
 | | `bullish_fractal_5d` | Williams Fractal 5일 내 최댓값 |
 | | `cmf` | Chaikin Money Flow |
 | | `vzo` | Volume Zone Oscillator |
-| 거래량·강도 (5) | `obv_change` | OBV 전일 대비 변화율 (클립 ±1) |
-| | `vol_ratio` | 거래량 / 20일 평균 거래량 |
-| | `vol_change` | 거래량 전일 대비 변화율 |
-| | `rsi_mfi_div` | RSI − MFI (발산 지표) |
-| | `sqzmi` | Squeeze Momentum Indicator |
-| 캔들·거시 (4) | `candle_body` | (종가 − 시가) / 시가 |
-| | `vix_level` | VIX 절대값 |
+| 거래량·강도 (1) | `vol_ratio` | 거래량 / 20일 평균 거래량 |
+| 거시경제 (3) | `vix_level` | VIX 절대값 |
 | | `vix_change_5d` | VIX 5일 변화율 |
 | | `sp500_1m` | S&P500 1개월 수익률 |
 
@@ -165,7 +160,7 @@ df_all = df_all.dropna(subset=['target'])     # 중간 50% 제외
 ```
 1. KS11/KQ11 시장 수익률 로드 (상대강도 피처용)
 2. VIX·S&P500 거시경제 데이터 로드 (Yahoo Finance)
-3. 종목별 OHLCV 수집 + 지표 계산 + 피처 생성 (25개)
+3. 종목별 OHLCV 수집 + 지표 계산 + 피처 생성 (18개)
 4. 전 종목 concat → 날짜별 크로스섹셔널 순위 → 이진 타깃 산출
    (상위 25% = 1, 하위 25% = 0, 중간 50% 제외)
 5. 시계열 분할 (앞 80% → 학습 / 뒤 20% → 검증)
@@ -211,7 +206,7 @@ for tr_d_idx, val_d_idx in tscv.split(unique_dates):
 | 검증 샘플 | 약 5,499 |
 | 양성 비율 | 약 50.7% (중립 구간 제외로 균형) |
 | 분할 기준일 | ≈ 2025-10 (재학습 시마다 변동) |
-| 피처 수 | 25개 |
+| 피처 수 | 18개 |
 
 ---
 
@@ -274,6 +269,7 @@ p = float(np.clip(np.searchsorted(calibration, p_raw), 0, 100))
 | PyKrx 제외 + 방향성 피처 추가 | 25 | 이진 분류 (상위 30%/하위 70%) | 0.5176 |
 | Neutral Zone 타깃 (v0.3.0) | 25 | 상위 25%/하위 25%, 중간 50% 제외 | **0.5600** |
 | XGBoost 과적합 감소 (v0.3.1) | 25 | 동일 | **0.5600** (XGB: 0.5558→0.5671) |
+| 피처 정제 + 학습 종목 확대 (v0.3.2) | 18 | 동일 | TBD (재학습 후 업데이트) |
 
 ---
 
@@ -300,7 +296,7 @@ koreanstocks train --future-days 10 --period 2y --test-ratio 0.2
 | 항목 | 값 | 이유 |
 |------|----|------|
 | 종합 점수 가중치 | tech×0.40 + ml×0.35 + sent×0.25 | 백테스트 검증 기반 |
-| 피처 목록 | BASE 25개 | 모델 재학습 없이 변경 불가 |
+| 피처 목록 | BASE 18개 | 모델 재학습 없이 변경 불가 |
 | 타깃 정의 | 상위 25%/하위 25% 이진, 중간 50% 제외 | AUC 최적화 기반 |
 | 캘리브레이션 기준 | test_proba 101분위수 | train_proba 기준은 과적합 분포 반영 |
 
