@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from koreanstocks.core import config
+from koreanstocks.core.config import config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["models"])
