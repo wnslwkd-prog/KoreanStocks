@@ -27,7 +27,7 @@
 
 `Korean Stocks AI/ML Analysis System`은 기술적 지표 분석, 머신러닝 예측, 뉴스 감성 분석을 통합하여 한국 주식 시장의 유망 종목을 자동으로 발굴하고 리포트를 생성하는 플랫폼입니다.
 
-매일 장 마감 후 자동으로 실행되어 KOSPI·KOSDAQ 전 종목 중 당일 **거래량 상위 + 등락률 상위** 종목을 스크리닝하고, 심층 분석 후 텔레그램으로 결과를 전송합니다.
+매일 장 마감 후 자동으로 실행되어 KOSPI·KOSDAQ 전 종목 중 **거래량 상위 · 상승 모멘텀 · 반등 후보** 버킷으로 분류된 종목을 스크리닝하고, 심층 분석 후 텔레그램으로 결과를 전송합니다.
 
 ---
 
@@ -36,6 +36,7 @@
 | 기능 | 설명 |
 |------|------|
 | **AI 종목 추천** | 기술적 지표·ML·뉴스를 종합한 복합 점수로 유망 종목 선정 |
+| **버킷 기반 선정** | 거래량 상위·상승 모멘텀·반등 후보 3개 버킷 쿼터 보장 (배지 UI 표시) |
 | **날짜별 히스토리** | 과거 30일 분석 결과를 날짜 선택으로 조회 |
 | **추천 지속성 히트맵** | 종목별 연속 추천 일수를 히트맵으로 시각화 (연속 2일+ 시 🔥 배지) |
 | **DB 우선 조회 & 세션 캐시** | '새로 분석 실행' 클릭 시 당일 저장된 DB 결과 우선 표시 (불필요한 재분석 방지), 메뉴 이탈 후 재진입해도 결과 유지 |
@@ -58,7 +59,7 @@ AI/LLM      OpenAI GPT-4o-mini
 ML          Scikit-learn (Random Forest, Gradient Boosting), XGBoost
 기술 지표    ta (RSI, MACD, BB, SMA, OBV, ADX, VWAP, CMF, MFI, Stochastic, CCI, ATR, Donchian)
              + finta (SQZMI, VZO, Fisher Transform, Williams Fractal)
-데이터       FinanceDataReader, Naver News API
+데이터       FinanceDataReader, Naver News API, DART Open API (선택)
 DB          SQLite
 자동화       GitHub Actions (평일 16:30 KST), Telegram Bot API
 시각화       Plotly, Matplotlib, Chart.js (백테스트 차트)
@@ -68,6 +69,63 @@ DB          SQLite
 ---
 
 ## 🏗 시스템 아키텍처
+
+```mermaid
+graph TD
+    subgraph CLI["🖥 CLI (koreanstocks)"]
+        serve["serve"]
+        recommend["recommend"]
+        analyze["analyze"]
+        train["train"]
+        outcomes["outcomes"]
+        sync["sync"]
+        init_cmd["init / home"]
+    end
+
+    subgraph CORE["🧠 Core Engine (koreanstocks.core)"]
+        indicators["indicators.py\n기술적 지표"]
+        prediction["prediction_model.py\nML 앙상블"]
+        news["news_agent.py\n뉴스 감성"]
+        analysis["analysis_agent.py\n심층 분석"]
+        rec_agent["recommendation_agent.py\n종목 추천"]
+        scheduler["scheduler.py\n자동화"]
+        trainer["trainer.py\nML 재학습"]
+        backtester["backtester.py\n백테스팅"]
+        notifier["notifier.py\n텔레그램"]
+        outcome_tracker["outcome_tracker.py\n성과 추적"]
+    end
+
+    subgraph DATA["📊 Data Layer"]
+        provider["provider.py\nFinanceDataReader\nKIND API"]
+        database["database.py\nSQLite CRUD"]
+    end
+
+    subgraph API["⚡ FastAPI (koreanstocks.api)"]
+        routers["routers/\nrecommendations · analysis\nwatchlist · backtest\nmarket · models"]
+    end
+
+    subgraph STATIC["🌐 Frontend"]
+        dashboard["dashboard.html\n인터랙티브 대시보드 (6탭)"]
+        slides["index.html\nReveal.js 브리핑"]
+    end
+
+    subgraph STORAGE["💾 저장소"]
+        db[("SQLite DB\nstock_analysis.db")]
+        models_dir["models/saved/\n*.pkl"]
+    end
+
+    CLI --> CORE
+    CLI --> API
+    API --> CORE
+    API --> STATIC
+    CORE --> DATA
+    DATA --> db
+    CORE --> db
+    trainer --> models_dir
+    prediction --> models_dir
+```
+
+### 디렉토리 구조
 
 ```
 KoreanStocks/
@@ -98,7 +156,7 @@ KoreanStocks/
 │       └── core/
 │           ├── config.py                # 환경변수 및 설정 관리 (VERSION 포함)
 │           ├── data/
-│           │   ├── provider.py          # 주가 데이터 수집 (KOSPI/KOSDAQ 필터)
+│           │   ├── provider.py          # 주가 데이터 수집 (FinanceDataReader + KIND API)
 │           │   └── database.py          # SQLite 관리 (분석 결과, 워치리스트)
 │           ├── engine/
 │           │   ├── indicators.py        # 기술적 지표 계산 (RSI, MACD, BB, SMA, OBV)
@@ -106,7 +164,8 @@ KoreanStocks/
 │           │   ├── prediction_model.py  # ML 앙상블 예측 (RF + GB + XGB 이진 분류)
 │           │   ├── news_agent.py        # 뉴스 수집 + 감성 분석 (GPT-4o-mini)
 │           │   ├── analysis_agent.py    # 종목 심층 분석 오케스트레이터
-│           │   ├── recommendation_agent.py  # 유망 종목 선정 + 추천 생성
+│           │   ├── recommendation_agent.py  # 버킷 기반 종목 선정 + 추천 생성
+│           │   ├── trainer.py           # ML 모델 학습 워크플로우
 │           │   └── scheduler.py         # 자동화 워크플로우
 │           └── utils/
 │               ├── backtester.py        # 전략 성과 검증 엔진
@@ -114,7 +173,7 @@ KoreanStocks/
 │               └── outcome_tracker.py   # 추천 결과 검증 (5·10·20거래일 후 성과 기록)
 ├── models/saved/                        # 학습된 ML 모델 및 파라미터
 ├── data/storage/                        # SQLite 데이터베이스 파일
-├── train_models.py                      # ML 모델 재학습 스크립트
+├── train_models.py                      # ML 모델 재학습 스크립트 (진입점)
 ├── tests/
 │   ├── test_backtester.py               # 백테스터 단위 테스트 (pytest)
 │   └── compat_check.py                  # Python 3.11~3.13 호환성 검증
@@ -126,53 +185,95 @@ KoreanStocks/
 
 ## 🔬 분석 파이프라인
 
-### 자동화 대상 종목 선정
-```
-KRX 전체 상장 종목
-    ├── 당일 거래량 상위 200종목
-    └── 당일 등락률 상위 200종목
-            ↓ 합집합 (선택한 시장 KOSPI / KOSDAQ / ALL 필터 적용)
-        최대 약 400개 후보
-            ↓ 거래량 순 정렬 후 상위 30~60개 심층 분석 (--limit 값 × 6, 최대 60개)
-        최종 N종목 추천 (--limit, 기본값 9)
+### 버킷 기반 후보군 선정
+
+```mermaid
+flowchart TD
+    A[FinanceDataReader\nKIND API\n전체 종목 수집] --> B[시장 필터\nKOSPI / KOSDAQ / ALL]
+    B --> V[거래량 상위\n40% 버킷]
+    B --> M[상승 모멘텀\n+2%~+15%\n35% 버킷]
+    B --> R[반등 후보\n거래량 상위 중 하락\n25% 버킷]
+
+    V & M & R --> POOL["분석 풀 구성\nmin(limit × 8, 80)개\nlimit=9 → 72종목"]
 ```
 
 ### 종목별 심층 분석 (4단계)
 
+```mermaid
+flowchart TD
+    POOL["분석 풀\n최대 80종목"] --> PAR["병렬 분석\nmax_workers=5\ntimeout=60s"]
+
+    PAR --> T["1단계\n기술적 지표\ntech_score 0~100"]
+    PAR --> ML["2단계\nML 앙상블\nml_score 0~100"]
+    PAR --> N["3단계\n뉴스 감성 분석\nsentiment -100~100"]
+
+    T & ML & N --> GPT["4단계\nGPT-4o-mini\nAI 종합 의견"]
+    GPT --> C["종합 점수 산출\ntech×0.40 + ml×0.35\n+ sentiment_norm×0.25"]
+    C --> Q["버킷 쿼터 기반\n최종 N종목 선정\n섹터 다양성 고려"]
+    Q --> DB[("SQLite DB\n날짜별 저장")]
+    Q --> TG["텔레그램\n리포트 발송"]
 ```
-1단계  기술적 지표 계산            → tech_score (0–100)
-       SMA 5/20/60/120, MACD, RSI(14), Bollinger Bands, OBV, Stochastic, CCI, ATR
 
-2단계  ML 앙상블 예측              → ml_score (0–100)
-       Random Forest + Gradient Boosting + XGBoost (AUC 기반 가중 앙상블)
-       18개 피처 (PyKrx 제외, 순수 기술지표 + 거시경제):
-         · 변동성·추세강도 (4): ATR 비율, ADX, ADX DI방향(DI+−DI−), BB 너비
-         · 시장 상대강도 (1): 3개월 초과수익 (vs KS11/KQ11)
-         · 모멘텀 팩터 (3): 52주 고점 비율, 모멘텀 가속도, MACD diff
-         · 추세 기울기 (2): MACD diff 5일 기울기, 가격/SMA5 비율
-         · finta 지표 (4): Fisher Transform, Williams Fractal, CMF, VZO
-         · 거래량·강도 (1): 거래량 비율 (20일 평균 대비)
-         · 거시경제 (3): VIX 레벨, VIX 5일 변화율, S&P500 1개월 수익률
-       타깃: 10거래일 후 수익률 상위 25% = 1 / 하위 25% = 0 (중간 50% 제외, neutral zone)
-       모델 없을 경우 tech_score 폴백
-       예측 의미: 이진 분류 확률 → test_proba 101분위수 캘리브레이션 → 0~100 균등 스케일
+#### 1단계 — 기술적 지표 (tech_score, 0–100)
 
-3단계  뉴스 감성 분석              → sentiment_score (-100–100)
-       Naver News API (display=50, 중복 제거 후 고유 기사 확보)
-       + DART 공시 API (최근 30일, 유상증자·합병·수주 등 공식 공시)
-       지수 감쇠 시간 가중치 적용 (오늘=1.00 / 7일 전=0.09)
-       → GPT-4o-mini 감성 분석 (temperature=0.1)
-       결과는 L1 메모리 + L2 SQLite에 당일 캐시 (API 비용 절감)
-
-4단계  AI 종합 의견                → action (BUY/HOLD/SELL)
-       GPT-4o-mini에 전 단계 데이터 + 점수 기준표 전달
-       → 요약, 강점, 약점, 추천 사유, 목표가 생성
-       → action과 목표가 일관성 자동 보정
-
-종합 점수 (ML 모델 활성 시) = tech×0.40 + ml×0.35 + sentiment_norm×0.25
-종합 점수 (ML 모델 없을 시) = tech×0.65 + sentiment_norm×0.35
-  ※ sentiment_norm = (sentiment_score + 100) / 2  → 0–100 정규화
 ```
+지표: SMA 5/20/60/120, MACD, RSI(14), Bollinger Bands, OBV, Stochastic, CCI, ATR
+      + ADX (DI+/DI−), CMF, VZO, Fisher Transform, Williams Fractal (finta)
+
+구성: ① 추세   (최대 40점) — SMA, MACD 골든크로스, ADX 방향
+      ② 모멘텀 (최대 30점) — RSI × MACD 방향 맥락 보정
+      ③ 위치   (최대 30점) — BB 위치 + CMF 자금흐름 + 거래량 확인
+```
+
+#### 2단계 — ML 앙상블 (ml_score, 0–100)
+
+```
+모델: Random Forest + Gradient Boosting + XGBoost (AUC 기반 가중 앙상블)
+피처: 18개 (순수 기술지표 + 거시경제, pykrx 의존성 없음)
+  · 변동성·추세강도 (4): ATR 비율, ADX, ADX DI방향(DI+−DI−), BB 너비
+  · 시장 상대강도 (1): 3개월 초과수익 (vs KS11/KQ11)
+  · 모멘텀 팩터 (3): 52주 고점 비율, 모멘텀 가속도, MACD diff
+  · 추세 기울기 (2): MACD diff 5일 기울기, 가격/SMA5 비율
+  · finta 지표 (4): Fisher Transform, Williams Fractal, CMF, VZO
+  · 거래량·강도 (1): 거래량 비율 (20일 평균 대비)
+  · 거시경제 (3): VIX 레벨, VIX 5일 변화율, S&P500 1개월 수익률
+타깃: 10거래일 후 수익률 상위 25% = 1 / 하위 25% = 0 (중간 50% 제외, neutral zone)
+출력: 이진 분류 확률 → test_proba 101분위수 캘리브레이션 → 0~100 균등 스케일
+폴백: 모델 없을 경우 tech_score로 대체
+```
+
+#### 3단계 — 뉴스 감성 분석 (sentiment_score, -100–100)
+
+```
+소스: Naver News API (display=50, 중복 제거 후 고유 기사 확보)
+    + DART 공시 API (최근 30일, 유상증자·합병·수주 등 공식 공시, 선택)
+가중치: 지수 감쇠 시간 가중치 (오늘=1.00 / 7일 전=0.09)
+분석: GPT-4o-mini (temperature=0.1, 퀀트 애널리스트 시스템 프롬프트)
+캐시: L1 메모리 + L2 SQLite 당일 캐시 (API 비용 절감)
+```
+
+#### 4단계 — AI 종합 의견
+
+```
+입력: 전 단계 데이터 + 점수 기준표
+출력: action (BUY/HOLD/SELL), 요약, 강점, 약점, 추천 사유, 목표가
+보정: action과 목표가 일관성 자동 검증
+```
+
+### 종합 점수 공식
+
+```mermaid
+flowchart LR
+    T["Tech Score\n0~100"] -->|"× 0.40"| SUM["종합 점수\n0~100"]
+    ML["ML Score\n0~100"] -->|"× 0.35"| SUM
+    N["News Score\n-100~100\n→ 정규화 0~100"] -->|"× 0.25"| SUM
+
+    SUM --> FB["※ ML 모델 없을 때\ntech×0.65 + sentiment_norm×0.35"]
+
+    style FB fill:#f9f,stroke:#999,stroke-dasharray:5 5
+```
+
+> `sentiment_norm = (sentiment_score + 100) / 2`  → 0~100 정규화
 
 ---
 
@@ -434,7 +535,7 @@ conda activate stocks_env
 ```bash
 # XGBoost 구동에 필요한 시스템 라이브러리
 sudo apt-get install -y libomp-dev          # Ubuntu/Debian
-# conda install -c conda-forge llvm-openmp  # macOS (conda 환경)
+# brew install libomp                       # macOS
 
 pip install -e .    # editable 설치 — 코드 수정이 즉시 반영됨
 ```
@@ -628,19 +729,27 @@ NAVER_CLIENT_SECRET
 3. `Actions` 탭에서 워크플로우 활성화 확인
 4. 수동 실행: `Actions > Daily Stock Analysis > Run workflow`
 
-**자동화 흐름:**
-```
-16:30 KST
-  → KOSPI + KOSDAQ 종목 리스트 갱신
-  → 거래량/등락률 상위 100종목 스크리닝
-  → 상위 30종목 심층 분석 (기술 + ML + 뉴스 + GPT)
-  → 종합 점수 상위 9종목 선정
-  → SQLite DB 날짜별 저장
-  → GitHub Artifact에 DB 백업 (90일 보존)
-  → DB를 저장소에 자동 커밋·푸시
-      └─ git clone 환경: git pull 로 즉시 반영
-      └─ PyPI 설치 환경: koreanstocks sync --force 로 즉시 반영
-  → 텔레그램 리포트 발송
+### 자동화 흐름
+
+```mermaid
+flowchart TD
+    TRIGGER["⏰ 16:30 KST\n평일 자동 실행\n(또는 수동 workflow_dispatch)"]
+    TRIGGER --> TRADING{"한국 증시\n거래일?"}
+
+    TRADING -- 휴장 --> SKIP["📅 텔레그램 휴장일 알림"]
+
+    TRADING -- 거래일 --> OUTCOME["지난 추천 성과 기록\n5·10·20거래일 후 수익률 집계\n→ 텔레그램 성과 리포트"]
+    OUTCOME --> STOCKLIST["KOSPI + KOSDAQ\n전체 종목 리스트 갱신"]
+    STOCKLIST --> BUCKETS["버킷 기반 후보군 선정\n거래량 상위 / 상승 모멘텀 / 반등 후보"]
+    BUCKETS --> ANALYSIS["심층 분석 (병렬)\n기술 + ML + 뉴스 + GPT"]
+    ANALYSIS --> SELECT["종합 점수 상위 9종목 선정\n버킷 쿼터 + 섹터 다양성"]
+    SELECT --> SAVE[("SQLite DB\n날짜별 저장")]
+    SAVE --> ARTIFACT["GitHub Artifact 백업\n(90일 보존)"]
+    SAVE --> COMMIT["저장소에 DB\n커밋·푸시"]
+    COMMIT --> NOTIFY["📱 텔레그램\n추천 리포트 발송"]
+
+    COMMIT --> SYNC1["git clone 환경\ngit pull"]
+    COMMIT --> SYNC2["PyPI 설치 환경\nkoreanstocks sync --force"]
 ```
 
 ---
@@ -673,7 +782,7 @@ NAVER_CLIENT_SECRET
 - 🐛 CLI `recommend` 명령이 `--limit` 인수를 scheduler에 전달하지 않던 버그 수정
 - 🔧 종목 수 드롭다운 5개·9개 두 가지로 단순화 (3·10·15 제거)
 - 🔧 힌트 문구 레이아웃 개선 — 카드 제목 옆 인라인 배치 (flex baseline)
-- 🔧 pykrx 라이브러리 제거 (FinanceDataReader 단독 운용)
+- 🔧 pykrx 라이브러리 제거 (FinanceDataReader + KIND API 단독 운용)
 
 ### v0.3.4 (2026-02-28)
 
