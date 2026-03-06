@@ -20,6 +20,9 @@
 
 기술적 분석은 OHLCV(시가·고가·저가·종가·거래량) 데이터를 기반으로 `tech_score`를 산출하고, 전략별 매수/매도 시그널을 생성한다.
 
+> **투자 시계:** 핵심 판단 기준(SMA5·20, MACD 12/26, RSI·BB·ADX 14~20일)이 모두 단기~중단기 지표다.
+> SMA120(6개월)은 계산되지만 `get_composite_score()`에서 사용되지 않아 **단기(5~60일) 관점**에 집중된다.
+
 주요 담당 클래스:
 - `src/koreanstocks/core/engine/indicators.py` → `IndicatorCalculator` (지표 계산 + 종합 점수)
 - `src/koreanstocks/core/engine/strategy.py` → `TechnicalStrategy` (시그널 생성)
@@ -337,7 +340,8 @@ strategy_returns[t] = signal[t-1] × pct_change[t]  # 1일 지연 (lookahead bia
 | 항목 | 내용 | 영향도 |
 |------|------|-------|
 | 단순 지표 조합 | 지표 간 상관관계 미고려. RSI·MACD 동시 과열 시 점수 과대 계상 가능 | 중간 |
-| SMA120 미활용 | `calculate_all()`에서 계산하나 `get_composite_score()`에서 미사용 | 낮음 |
+| SMA120 미활용 | `calculate_all()`에서 계산하나 `get_composite_score()`에서 미사용 — 장기 추세 필터링 없음 | 낮음 |
+| **단기 특화** | 지표 파라미터 최대 60일(SMA60). 반년~1년 이상 보유 목적에는 부적합 | 높음 |
 | Stochastic·CCI·ATR 미활용 | 계산 후 점수 반영 없음 (CMF·ADX는 반영됨) — 향후 확장 여지 | 낮음 |
 | VWAP·Donchian 미활용 | 계산하나 tech_score·ML 피처 모두 미사용 — 향후 확장 여지 | 낮음 |
 | 백테스팅 무위험 이자율 0% | 샤프 지수 산출 시 무위험 이자율 미반영 → 절대값 과대 평가 | 낮음 |

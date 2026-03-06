@@ -66,6 +66,7 @@ function coverSlide(market, date, count) {
         <div>
           <div class="cover-title">📊 오늘의 시장 브리핑</div>
           <div class="cover-sub">${date || ""}  ·  분석 종목 ${count}개</div>
+          <div class="sl-disclaimer" style="margin-top:8px">⏱️ 단기 신호 (ML 10거래일 · 기술지표 5~60일 · 뉴스 당일 기준)</div>
         </div>
         <div class="sl-mkt-row">
           ${mktCard("KOSPI",   kospi)}

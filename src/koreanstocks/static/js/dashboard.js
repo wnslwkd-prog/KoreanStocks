@@ -233,7 +233,7 @@ function buildModalHtml(rec) {
 
         ${ai.target_price
           ? `<div style="background:rgba(0,212,170,.1);border:1px solid var(--accent);border-radius:6px;padding:10px 14px;font-size:.9em">
-              🎯 <strong>목표가(4주): ₩${fmt(ai.target_price)}</strong>
+              🎯 <strong>목표가(10거래일): ₩${fmt(ai.target_price)}</strong>
               ${upside != null ? `<span class="${upside >= 0 ? "pos" : "neg"}">(${upside >= 0 ? "+" : ""}${upside}%)</span>` : ""}
               ${ai.target_rationale
                 ? `<div style="font-size:.78em;color:var(--muted);margin-top:4px">${ai.target_rationale}</div>` : ""}
