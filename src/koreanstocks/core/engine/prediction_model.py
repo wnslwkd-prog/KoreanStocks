@@ -9,27 +9,30 @@ from typing import Dict, List, Optional, Any
 import json
 
 from koreanstocks.core.config import config
+from koreanstocks.core.constants import MIN_MODEL_AUC
 from koreanstocks.core.engine.indicators import indicators
+from koreanstocks.core.engine.features import build_features as _build_features
 
 logger = logging.getLogger(__name__)
 
-# 예측 시 사용할 피처 목록 — trainer.py BASE_FEATURE_COLS와 동기화 필수 (18개)
+# 예측 시 사용할 피처 목록 — trainer.py BASE_FEATURE_COLS와 동기화 필수 (20개)
 _FEATURE_COLS = [
     'atr_ratio', 'adx', 'bb_width', 'bb_position',
     'rs_vs_mkt_3m', 'high_52w_ratio', 'mom_accel',
     'macd_diff', 'macd_slope_5d', 'price_sma_5_ratio',
     'fisher', 'bullish_fractal_5d',
-    'mfi', 'vzo', 'low_52w_ratio',
-    'vix_level', 'vix_change_5d', 'sp500_1m',
+    'mfi', 'vzo', 'obv_trend', 'low_52w_ratio',
+    'rsi', 'cci_pct',
+    'vix_level', 'sp500_1m',
 ]
-# 구버전(22/34/37/23/25) 구분용 문서 상수 (코드 로직에서는 _FEATURE_COLS 컬럼명 선택 사용)
-_BASE_FEATURE_COUNT = 18
+# 구버전(22/34/37/23/25/18/17) 구분용 문서 상수 (코드 로직에서는 _FEATURE_COLS 컬럼명 선택 사용)
+_BASE_FEATURE_COUNT = 20
 # AUC 가중치 하한선: AUC 기반 가중치 = (AUC - 0.5) / 상수
 # AUC=0.55 → weight=0.05, AUC=0.60 → weight=0.10 (최대 2배 차이 허용)
 _AUC_WEIGHT_FLOOR = 0.50   # AUC - 0.5가 이 값 이하면 weight=0 처리
 # 모델 품질 게이트: test_auc 가 이 값 미만이면 모델 로드를 거부하고 tech_score 폴백 사용
 # AUC < 0.52 = 랜덤(0.5)과 사실상 동등 → 예측력 없음
-_MIN_MODEL_AUC = 0.52
+_MIN_MODEL_AUC = MIN_MODEL_AUC  # core/constants.py 단일 소스
 # 하위 호환: 구버전 R² 기반 모델 로드 시 fallback용 (사용 안 함)
 _MIN_MODEL_R2 = 0.0
 
@@ -110,6 +113,21 @@ class StockPredictionModel:
                 if not model_path.exists(): missing.append("model.pkl")
                 if not scaler_path.exists(): missing.append("scaler.pkl")
                 logger.warning(f"⚠️ Skipping {name}: Missing {', '.join(missing)}")
+
+        # ── Softmax 정규화: AUC 미세 차이 과민도 완화 ──────────────────────
+        # 선형 가중치(AUC-0.5)는 0.019 AUC 차이로 23% 가중치 격차 → 과도한 편중
+        # temperature=5: 차이는 유지하되 최대/최소 격차를 ~8%로 압축
+        if len(self.model_weights) > 1:
+            _names = list(self.model_weights.keys())
+            _raw   = np.array([self.model_weights[n] for n in _names])
+            _exp   = np.exp(_raw * 5.0)
+            _norm  = _exp / _exp.sum()
+            for _n, _w in zip(_names, _norm.tolist()):
+                self.model_weights[_n] = float(_w)
+            logger.info(
+                f"앙상블 가중치 softmax 정규화: "
+                + ", ".join(f"{n}={self.model_weights[n]:.4f}" for n in _names)
+            )
 
 
     def _get_market_df(self, index_symbol: str = 'KS11') -> pd.DataFrame:
@@ -195,136 +213,12 @@ class StockPredictionModel:
     def _extract_features(self, df: pd.DataFrame,
                           market_df: pd.DataFrame = None,
                           macro_df: pd.DataFrame = None) -> pd.DataFrame:
-        """이미 지표가 계산된 데이터프레임에서 특성(Feature)만 추출"""
-        if df.empty: return df
-        feat = pd.DataFrame(index=df.index)
+        """이미 지표가 계산된 데이터프레임에서 특성(Feature)만 추출.
 
-        # ── 기존 4개 ──────────────────────────────────
-        feat['rsi']               = df['rsi']
-        feat['macd_diff']         = df['macd_diff']
-        feat['price_sma_20_ratio'] = df['close'] / df['sma_20']
-        feat['vol_change']        = df['volume'].pct_change()
-
-        # ── 추세 (multi-timeframe) ────────────────────
-        feat['price_sma_5_ratio'] = df['close'] / df['sma_5']
-        feat['rsi_change']        = df['rsi'].diff()
-        feat['macd_diff_change']  = df['macd_diff'].diff()
-        feat['macd_slope_5d']     = df['macd_diff'].diff(5)
-
-        # ── 볼린저 밴드 ───────────────────────────────
-        bb_range = (df['bb_high'] - df['bb_low']).replace(0, np.nan)
-        feat['bb_position']       = (df['close'] - df['bb_low']) / bb_range
-        feat['bb_width']          = (bb_range / df['bb_mid']).clip(0.01, 0.50)
-
-        # ── 거래량 ────────────────────────────────────
-        feat['vol_ratio']         = df['volume'] / df['vol_sma_20'].replace(0, np.nan)
-
-        # vol_zscore: 거래량 표준화 (-3~+3)
-        vol_ma  = df['volume'].rolling(20).mean()
-        vol_std = df['volume'].rolling(20).std().replace(0, np.nan)
-        feat['vol_zscore'] = ((df['volume'] - vol_ma) / vol_std).clip(-3, 3)
-
-        # low_52w_ratio: 52주 저가 대비 반등 위치 (≥ 1.0)
-        feat['low_52w_ratio'] = (
-            df['close'] / df['close'].rolling(config.TRADING_DAYS_PER_YEAR, min_periods=60).min()
-        )
-
-        # ── 모멘텀 (오실레이터) ───────────────────────
-        if 'stoch_k' in df.columns:
-            feat['stoch_k']       = df['stoch_k']
-        if 'stoch_d' in df.columns:
-            feat['stoch_d']       = df['stoch_d']
-        if 'cci' in df.columns:
-            feat['cci']           = df['cci']
-
-        # ── 변동성 ────────────────────────────────────
-        if 'atr' in df.columns:
-            feat['atr_ratio']     = (df['atr'] / df['close']).rolling(60).rank(pct=True)
-
-        # ── OBV 변화율 ────────────────────────────────
-        if 'obv' in df.columns:
-            feat['obv_change']    = df['obv'].pct_change().clip(-1, 1)
-
-        # ── 당일 캔들 ────────────────────────────────
-        feat['candle_body']       = (df['close'] - df['open']) / df['open']
-
-        # ── 모멘텀 팩터 (신규) ────────────────────────
-        feat['return_1m']         = df['close'].pct_change(20)
-        feat['return_3m']         = df['close'].pct_change(60)
-        feat['high_52w_ratio']    = df['close'] / df['close'].rolling(config.TRADING_DAYS_PER_YEAR, min_periods=60).max()
-        feat['mom_accel']         = feat['return_1m'] - feat['return_3m'] / 3.0
-
-        # ── 시장 상대강도 ─────────────────────────────
-        if market_df is not None and not market_df.empty:
-            aligned = market_df.reindex(feat.index).ffill()
-            feat['rs_vs_mkt_1m'] = (feat['return_1m'] - aligned.get('return_1m', 0)).fillna(0)
-            feat['rs_vs_mkt_3m'] = (feat['return_3m'] - aligned.get('return_3m', 0)).fillna(0)
-        else:
-            feat['rs_vs_mkt_1m'] = 0.0
-            feat['rs_vs_mkt_3m'] = 0.0
-
-        # ── 신규 12개 피처 ────────────────────────────
-
-        # ADX 추세 강도 + DI 방향
-        if 'adx' in df.columns:
-            feat['adx'] = df['adx']
-        if 'adx_pos' in df.columns and 'adx_neg' in df.columns:
-            feat['adx_di_diff'] = df['adx_pos'] - df['adx_neg']
-
-        # VWAP 대비 현재가 위치
-        if 'vwap' in df.columns:
-            feat['vwap_ratio'] = (
-                df['close'] / df['vwap'].replace(0, np.nan)
-            ).clip(0.5, 2.0)
-
-        # Donchian Channel 위치
-        if 'dc_high' in df.columns and 'dc_low' in df.columns:
-            dc_range = (df['dc_high'] - df['dc_low']).replace(0, np.nan)
-            feat['dc_position'] = (
-                (df['close'] - df['dc_low']) / dc_range
-            ).clip(0, 1)
-
-        # 거래량 방향성 지표
-        if 'cmf' in df.columns:
-            feat['cmf'] = df['cmf']
-        if 'mfi' in df.columns:
-            feat['mfi'] = df['mfi']
-        if 'rsi' in df.columns and 'mfi' in df.columns:
-            feat['rsi_mfi_div'] = df['rsi'] - df['mfi']
-
-        # Squeeze Momentum (finta)
-        if 'sqzmi' in df.columns:
-            feat['sqzmi']       = df['sqzmi']
-            feat['sqzmi_accel'] = df['sqzmi'].diff().fillna(0)
-
-        # Volume Zone Oscillator (finta)
-        if 'vzo' in df.columns:
-            feat['vzo'] = df['vzo']
-
-        # Fisher Transform (finta)
-        if 'fisher' in df.columns:
-            feat['fisher'] = df['fisher']
-
-        # Williams Fractal 5일 내 강세 프랙탈 (finta)
-        if 'bullish_fractal' in df.columns:
-            feat['bullish_fractal_5d'] = (
-                df['bullish_fractal'].rolling(5, min_periods=1).max()
-            )
-
-        # ── 거시경제 3개 피처 ────────────────────────────────────
-        if macro_df is not None and not macro_df.empty:
-            aligned = macro_df.reindex(feat.index).ffill()
-            feat['vix_level']     = aligned['vix_level']     if 'vix_level'     in aligned.columns else 20.0
-            feat['vix_change_5d'] = aligned['vix_change_5d'] if 'vix_change_5d' in aligned.columns else 0.0
-            feat['sp500_1m']      = aligned['sp500_1m']      if 'sp500_1m'      in aligned.columns else 0.0
-        else:
-            feat['vix_level']     = 20.0
-            feat['vix_change_5d'] = 0.0
-            feat['sp500_1m']      = 0.0
-
-        # ML 피처(_FEATURE_COLS)만 선택 → 미사용 피처의 NaN이 유효 행을 제거하지 않도록
-        feat_ml = feat[[c for c in _FEATURE_COLS if c in feat.columns]]
-        return feat_ml.replace([np.inf, -np.inf], np.nan).dropna()
+        features.py의 build_features()에 위임 → trainer.py 학습 로직과 완전 동일.
+        train/serve 피처 불일치(feature skew)를 구조적으로 방지.
+        """
+        return _build_features(df, market_df=market_df, macro_df=macro_df)
 
     def predict(self, code: str, df: pd.DataFrame,
                 df_with_indicators: pd.DataFrame = None,
@@ -357,39 +251,37 @@ class StockPredictionModel:
 
         # _FEATURE_COLS 순서로 피처 선택 (학습 시 FEATURE_COLS와 동일 순서)
         feat_cols = [c for c in _FEATURE_COLS if c in features.columns]
-        latest_x = features[feat_cols].iloc[-1:].values  # shape (1, n_features)
+        latest_x = features[feat_cols].iloc[-1:]  # DataFrame (1, n_features) — feature names 보존
 
-        # AUC 기반 가중 앙상블: w_i = (AUC_i - 0.5)
-        # predict_proba()[:, 1] → P(top 30%) → 0~1 → ×100 → 0~100 점수
-        weighted_sum = 0.0
-        total_weight = 0.0
-        model_count  = 0
+        # ── 분류기 / 랜커 분리 앙상블 ───────────────────────────────────────
+        # 분류기(predict_proba): 확률 기반 → calibration → 0~100
+        # 랜커(predict):         raw score 기반 → calibration → 0~100
+        # 최종: classifier 75% + ranker 25% 가중 평균 (랜커는 보조 신호)
+        clf_sum, clf_weight = 0.0, 0.0
+        rnk_sum, rnk_weight = 0.0, 0.0
+        model_count = 0
         for name, model in self.models.items():
             try:
                 scaler = self.scalers.get(name)
-                x = latest_x.copy()
                 if scaler is not None:
-                    x = scaler.transform(x)
-                # 분류기: predict_proba → 캘리브레이션(percentile rank) → 0~100
+                    x = pd.DataFrame(scaler.transform(latest_x), columns=feat_cols)
+                else:
+                    x = latest_x.copy()
+                cal = self.calibrations.get(name)
+                w   = self.model_weights.get(name, 0.05)
                 if hasattr(model, 'predict_proba'):
+                    # 분류기: predict_proba → calibration percentile → 0~100
                     p_raw = float(model.predict_proba(x)[0, 1])
-                    cal = self.calibrations.get(name)
-                    if cal:
-                        # np.searchsorted: p_raw가 101분위수 배열 중 몇 번째 분위인지 → 0~100
-                        p = float(np.clip(np.searchsorted(cal, p_raw), 0, 100))
-                    else:
-                        p = p_raw * 100.0
-                else:  # ranker (predict_proba 없음)
+                    p = float(np.clip(np.searchsorted(cal, p_raw), 0, 100)) if cal else p_raw * 100.0
+                    clf_sum    += p * w
+                    clf_weight += w
+                else:
+                    # 랜커: raw score → calibration percentile → 0~100
                     p_raw = float(model.predict(x)[0])
-                    cal = self.calibrations.get(name)
-                    if cal:
-                        p = float(np.clip(np.searchsorted(cal, p_raw), 0, 100))
-                    else:
-                        p = float(np.clip(p_raw, 0.0, 100.0))
-                w = self.model_weights.get(name, 0.05)
-                weighted_sum += p * w
-                total_weight += w
-                model_count  += 1
+                    p = float(np.clip(np.searchsorted(cal, p_raw), 0, 100)) if cal else 50.0
+                    rnk_sum    += p * w
+                    rnk_weight += w
+                model_count += 1
             except Exception as e:
                 logger.debug(f"[{name}] predict failed: {e}")
                 continue
@@ -409,8 +301,14 @@ class StockPredictionModel:
                 logger.warning(f"No ML models loaded for {code}. Using feature heuristic fallback: {score}")
                 return {"ensemble_score": score, "model_count": 0, "note": "fallback_heuristic"}
 
-        # AUC 가중 앙상블 점수 (0~100): P(top 30%) 확률의 가중평균
-        ensemble_score = float(np.clip(weighted_sum / total_weight, 0.0, 100.0))
+        # ── 분류기 75% + 랜커 25% 가중 결합 ──────────────────────────────
+        clf_score = clf_sum / clf_weight if clf_weight > 0 else 50.0
+        rnk_score = rnk_sum / rnk_weight if rnk_weight > 0 else clf_score
+        if clf_weight > 0 and rnk_weight > 0:
+            ensemble_score = 0.75 * clf_score + 0.25 * rnk_score
+        else:
+            ensemble_score = clf_score if clf_weight > 0 else rnk_score
+        ensemble_score = float(np.clip(ensemble_score, 0.0, 100.0))
         return {
             "ensemble_score":     round(ensemble_score, 2),
             "model_count":        model_count,

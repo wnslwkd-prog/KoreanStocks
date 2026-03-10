@@ -110,8 +110,8 @@
 
       <!-- 추가 폼 -->
       <div class="flex-row" style="margin-bottom:16px">
-        <input type="text" id="wl-code-input" placeholder="종목 코드 (예: 005930)" style="width:200px" />
-        <button class="btn btn-primary" onclick="addWatchlist()">추가</button>
+        <input type="text" id="wl-code-input" placeholder="종목 코드 (예: 005930)" style="width:200px" onkeydown="if(event.key==='Enter')addWatchlist()" />
+        <button id="btn-wl-add" class="btn btn-primary" onclick="addWatchlist()">추가</button>
         <span class="status-msg" id="wl-add-status"></span>
       </div>
 
@@ -159,7 +159,7 @@
             <option value="9" selected>9개</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="runRecommendations()" style="align-self:flex-end">🔄 새로 분석 실행</button>
+        <button class="btn btn-primary" id="btn-run-recommendations" onclick="runRecommendations()" style="align-self:flex-end">🔄 새로 분석 실행</button>
         <span class="status-msg" id="rec-run-status" style="align-self:flex-end"></span>
       </div>
       <div id="rec-trading-notice"></div>
@@ -344,7 +344,7 @@
           <label class="inline-label">투자 금액 (원)</label>
           <input type="number" id="bt-capital" value="10000000" step="1000000" style="width:150px" />
         </div>
-        <button class="btn btn-primary" onclick="runBacktest()" style="align-self:flex-end">▶ 백테스트 실행</button>
+        <button class="btn btn-primary" id="btn-run-backtest" onclick="runBacktest()" style="align-self:flex-end">▶ 백테스트 실행</button>
       </div>
       <div class="status-msg" id="bt-status"></div>
     </div>
@@ -413,12 +413,12 @@
         아래 버튼을 누르면 <strong>종목 갱신 → 유망 종목 분석 → 텔레그램 알림</strong> 프로세스가 백그라운드에서 실행됩니다.
       </p>
       <div id="settings-trading-notice"></div>
-      <button class="btn btn-primary" onclick="runDailyUpdate()" style="margin-top:10px">▶ Run Full Daily Update</button>
+      <button class="btn btn-primary" id="btn-daily-update" onclick="runDailyUpdate()" style="margin-top:10px">▶ Run Full Daily Update</button>
       <div class="status-msg" id="settings-status"></div>
     </div>
 
     <div class="card">
-      <div class="card-title">🔔 Telegram 설정 상태</div>
+      <div class="card-title">🔔 서버 연결 상태</div>
       <div id="telegram-status" style="font-size:.88em;color:var(--muted)">확인 중…</div>
     </div>
 
@@ -509,7 +509,7 @@
             <option value="300">상위 300종목</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="runValueScreener()" style="align-self:flex-end">🔍 스크리닝 실행</button>
+        <button class="btn btn-primary" id="btn-run-value" onclick="runValueScreener()" style="align-self:flex-end">🔍 스크리닝 실행</button>
       </div>
       <div class="status-msg" id="val-status" style="margin-top:10px"></div>
     </div>
@@ -729,7 +729,7 @@
             <option value="300">상위 300종목</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="runQualityScreener()" style="align-self:flex-end">🔍 스크리닝 실행</button>
+        <button class="btn btn-primary" id="btn-run-quality" onclick="runQualityScreener()" style="align-self:flex-end">🔍 스크리닝 실행</button>
       </div>
       <div class="status-msg" id="qual-status" style="margin-top:10px"></div>
     </div>

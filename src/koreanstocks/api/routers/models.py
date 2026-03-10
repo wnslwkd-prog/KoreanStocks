@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from koreanstocks.core.config import config
+from koreanstocks.core.constants import MIN_MODEL_AUC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["models"])
@@ -22,7 +23,7 @@ _MODEL_CONFIGS = [
     ("xgboost_ranker",    "XGBoost Ranker",     "xgboost_ranker_params.json"),
 ]
 
-_MIN_AUC_THRESHOLD = 0.52
+_MIN_AUC_THRESHOLD = MIN_MODEL_AUC  # core/constants.py 단일 소스
 
 
 def _days_since(saved_at: str) -> int:
@@ -50,13 +51,19 @@ def _load_model_info(name: str, label: str, filename: str) -> dict | None:
         logger.error(f"params 로드 실패 [{filename}]: {e}")
         return None
 
-    test_auc  = p.get("test_auc", 0.0)
-    cv_mean   = p.get("cv_auc_mean", 0.0)
-    saved_at  = p.get("saved_at", "")
+    # null 값 방어 — p.get(key, default)는 키가 존재하고 값이 null이면 None 반환
+    _raw_auc = p.get("test_auc")
+    test_auc  = float(_raw_auc) if _raw_auc is not None else 0.0
+    _raw_cv  = p.get("cv_auc_mean")
+    cv_mean   = float(_raw_cv)  if _raw_cv  is not None else 0.0
+    saved_at  = p.get("saved_at") or ""
     model_type = p.get("model_type", "binary_classifier")
     # ranker는 test_logloss=None으로 저장됨 (log_loss 미정의)
     raw_logloss = p.get("test_logloss")
     test_logloss = float(raw_logloss) if raw_logloss is not None else None
+
+    _raw_overfit = p.get("overfit_gap")
+    overfit_gap  = float(_raw_overfit) if _raw_overfit is not None else 0.0
 
     return {
         "name":               name,
@@ -66,7 +73,7 @@ def _load_model_info(name: str, label: str, filename: str) -> dict | None:
         "train_auc":          p.get("train_auc", 0.0),
         "cv_auc_mean":        cv_mean,
         "cv_auc_std":         p.get("cv_auc_std", 0.0),
-        "overfit_gap":        p.get("overfit_gap", 0.0),
+        "overfit_gap":        overfit_gap,
         "regime_gap":         round(test_auc - cv_mean, 4),
         "test_logloss":       test_logloss,
         "quality_pass":       p.get("quality_pass", False),
@@ -100,28 +107,33 @@ def _compute_ensemble(models: list[dict]) -> dict:
     mean_test_auc    = round(sum(m["test_auc"]    for m in active) / n, 4)
     mean_overfit_gap = round(sum(m["overfit_gap"] for m in active) / n, 4)
     mean_regime_gap  = round(sum(m["regime_gap"]  for m in active) / n, 4)
-    all_quality_pass = all(m["quality_pass"] for m in active)
-    days_since       = max(m["days_since_training"] for m in active)
+    all_quality_pass  = all(m["quality_pass"] for m in active)
+    any_date_unknown  = any(m["days_since_training"] == -1 for m in active)
+    valid_days        = [m["days_since_training"] for m in active if m["days_since_training"] != -1]
+    days_since        = max(valid_days) if valid_days else -1
 
     # 드리프트 등급 결정
     factors: list[str] = []
     retrain = False
 
-    if days_since > 30:
+    if any_date_unknown:
+        factors.append("일부 모델의 학습 날짜 정보 없음 (saved_at 파싱 실패) — 재학습 권장")
+        retrain = True
+    if days_since != -1 and days_since > 30:
         factors.append(f"마지막 학습 {days_since}일 경과 (권장: 30일 이내)")
         retrain = True
     if mean_overfit_gap > 0.10:
         factors.append(f"평균 과적합 갭 {mean_overfit_gap:.4f} (임계: 0.10)")
         retrain = True
     if not all_quality_pass:
-        factors.append("품질 기준 미달 모델 존재 (AUC < 0.52)")
+        factors.append(f"품질 기준 미달 모델 존재 (AUC < {_MIN_AUC_THRESHOLD})")
         retrain = True
 
     if retrain:
         drift_level = "HIGH"
-    elif days_since > 14 or mean_regime_gap > 0.07:
+    elif (days_since != -1 and days_since > 14) or mean_regime_gap > 0.07:
         drift_level = "MEDIUM"
-        if days_since > 14:
+        if days_since != -1 and days_since > 14:
             factors.append(f"마지막 학습 {days_since}일 경과 (권장: 14일 이내)")
         if mean_regime_gap > 0.07:
             factors.append(f"레짐 갭 {mean_regime_gap:.4f} > 0.07 (시장 의존도 주의)")

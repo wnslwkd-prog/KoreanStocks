@@ -57,10 +57,12 @@ def _chk_fdr_listing():
         if not df.empty:
             return {"status": "ok", "detail": f"KOSPI {len(df):,}종목 수신 (FDR 직접)"}
     except Exception as e:
-        pass
+        detail_suffix = f" ({type(e).__name__}: {str(e)[:80]})"
+    else:
+        detail_suffix = " (빈 DataFrame 반환)"
     return {
         "status": "warn",
-        "detail": "FDR StockListing 차단 중 (KRX 세션 정책) — KIND API 폴백 동작",
+        "detail": f"FDR StockListing 차단 중 (KRX 세션 정책) — KIND API 폴백 동작{detail_suffix}",
     }
 
 
@@ -72,7 +74,7 @@ def _chk_kind_api():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     r = requests.get(
         'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13',
-        headers=headers, timeout=15,
+        headers=headers, timeout=10,
     )
     r.raise_for_status()
     df_raw = pd.read_html(BytesIO(r.content), encoding='euc-kr')[0]
@@ -138,7 +140,7 @@ def _chk_openai():
     api_key = config.OPENAI_API_KEY or ''
     if not api_key:
         return {"status": "error", "detail": "API 키 미설정 (OPENAI_API_KEY)"}
-    client = openai.OpenAI(api_key=api_key)
+    client = openai.OpenAI(api_key=api_key, timeout=10.0)
     resp = client.chat.completions.create(
         model=config.DEFAULT_MODEL,
         messages=[{"role": "user", "content": "ping"}],
@@ -153,7 +155,6 @@ def _chk_dart():
     if not dart_key:
         return {"status": "warn", "detail": "미설정 (선택 항목 — 공시 수집 비활성)"}
     import requests
-    from datetime import datetime
 
     # 1차: 기업 정보 조회
     r1 = requests.get(
@@ -161,7 +162,8 @@ def _chk_dart():
         params={"crtfc_key": dart_key, "corp_code": "00126380"},
         timeout=6,
     )
-    if not (r1.status_code == 200 and r1.json().get('status') == '000'):
+    r1_json = r1.json()
+    if not (r1.status_code == 200 and r1_json.get('status') == '000'):
         return {"status": "warn", "detail": f"DART company.json 응답 이상 (status={r1.status_code})"}
 
     # 2차: 재무제표 단일 조회 (fnlttSinglAcnt) — 가치주 스크리너 핵심 소스
@@ -174,29 +176,37 @@ def _chk_dart():
             "bsns_year": prev_year,
             "reprt_code": "11011",    # 사업보고서
         },
-        timeout=8,
+        timeout=5,
     )
-    if r2.status_code == 200 and r2.json().get('status') == '000':
-        count = len(r2.json().get('list', []))
+    r2_json = r2.json()
+    if r2.status_code == 200 and r2_json.get('status') == '000':
+        count = len(r2_json.get('list', []))
         return {"status": "ok", "detail": f"DART API 정상 (company.json + fnlttSinglAcnt {prev_year}년 {count}건)"}
     return {"status": "warn", "detail": f"company.json 정상 · fnlttSinglAcnt 응답 이상 (status={r2.status_code})"}
 
 
 def _chk_sqlite():
     from koreanstocks.core.data.database import db_manager
+    missing = []
+    parts = []
     with db_manager.get_connection() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM recommendations")
-        recs = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM analysis_history")
-        hist = cur.fetchone()[0]
+        for table in ("recommendations", "analysis_history"):
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {table}")
+                count = cur.fetchone()[0]
+                parts.append(f"{table} {count:,}건")
+            except Exception:
+                missing.append(table)
         try:
             cur.execute("SELECT COUNT(*) FROM fundamental_cache")
             fcache = cur.fetchone()[0]
-            fcache_str = f" · fundamental_cache {fcache:,}건"
+            parts.append(f"fundamental_cache {fcache:,}건")
         except Exception:
-            fcache_str = ""
-    return {"status": "ok", "detail": f"recommendations {recs:,}건 · analysis_history {hist:,}건{fcache_str}"}
+            pass
+    if missing:
+        return {"status": "warn", "detail": f"테이블 없음: {', '.join(missing)} (DB 초기화 필요)"}
+    return {"status": "ok", "detail": " · ".join(parts)}
 
 
 def _chk_naver_fundamental():
@@ -273,7 +283,7 @@ def _chk_naver_coinfo():
         'Referer': f'https://finance.naver.com/item/coinfo.naver?code={code}',
     }
     url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={code}&target=finsum_Y"
-    r = requests.get(url, headers=headers, timeout=12)
+    r = requests.get(url, headers=headers, timeout=10)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -453,13 +463,16 @@ def check_data_sources():
             for src in _DATA_SOURCES
         }
         completed = {}
-        for future in as_completed(futures, timeout=15):
-            src = futures[future]
-            try:
-                check_result = future.result()
-            except Exception as e:
-                check_result = {"status": "error", "detail": str(e)[:120], "latency_ms": 0}
-            completed[src["id"]] = check_result
+        try:
+            for future in as_completed(futures, timeout=15):
+                src = futures[future]
+                try:
+                    check_result = future.result()
+                except Exception as e:
+                    check_result = {"status": "error", "detail": str(e)[:120], "latency_ms": 0}
+                completed[src["id"]] = check_result
+        except _FuturesTimeout:
+            logger.warning("데이터 소스 헬스체크 전체 타임아웃 (15초 초과) — 미완료 소스는 오류로 처리")
 
     for src in _DATA_SOURCES:
         chk = completed.get(src["id"], {"status": "error", "detail": "결과 없음", "latency_ms": 0})

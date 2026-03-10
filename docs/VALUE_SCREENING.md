@@ -1,7 +1,7 @@
 # 가치주 스크리닝 시스템 기술 문서
 
-> Korean Stocks AI/ML Analysis System `v0.4.0`
-> 최종 업데이트: 2026-03-06
+> Korean Stocks AI/ML Analysis System `v0.4.1`
+> 최종 업데이트: 2026-03-10
 
 ---
 
@@ -400,7 +400,7 @@ POSCO홀딩스    10.8   0.90  12.1%  55.2%   22.1%   7/9   68.1
 
 ## 10. 대시보드 UI
 
-`/dashboard` → **가치주 추천** 탭 (7번째 탭)
+`/dashboard` → **가치주 추천** 탭 (4번째 탭)
 
 ### 필터 컨트롤
 

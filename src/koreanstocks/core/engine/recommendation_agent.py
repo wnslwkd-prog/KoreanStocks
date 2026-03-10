@@ -70,7 +70,7 @@ def _apply_bucket_quota(
             quotas[bucket_name] = max(1, limit - assigned)
 
     selected: List[Dict[str, Any]] = []
-    selected_codes: set = set()
+    selected_codes: set[str] = set()
     sector_count: Dict[str, int] = {}
 
     def _pick(candidates: List[Dict[str, Any]], quota: int) -> List[Dict[str, Any]]:
@@ -175,9 +175,6 @@ class RecommendationAgent:
         """
         logger.info(f"Generating recommendations (Market: {market}, Theme: {theme_label})...")
 
-        # 종목명 매칭용 전체 리스트 (루프 밖 1회)
-        stock_list = data_provider.get_stock_list()
-
         # ── 1. 후보군 코드 선정 ─────────────────────────────────────
         if theme_keywords:
             # 테마 지정 시: 테마 종목 + 거래량 랭킹 교집합 우선, 나머지 추가
@@ -203,7 +200,7 @@ class RecommendationAgent:
             buckets = data_provider.get_market_buckets(market)
             total_pool = min(limit * 8, 80)
             code_bucket = {}
-            seen: set = set()
+            seen: set[str] = set()
 
             for bucket_name, ratio in _BUCKET_RATIOS:
                 pool_size = max(2, round(total_pool * ratio))
@@ -218,6 +215,9 @@ class RecommendationAgent:
 
         if not candidate_codes:
             return []
+
+        # 종목명 매칭용 전체 리스트 (후보군 확정 후 1회 조회)
+        stock_list = data_provider.get_stock_list()
 
         # 후보군 버킷 분포 로깅
         pool_dist = Counter(code_bucket[c] for c in candidate_codes)
@@ -304,6 +304,8 @@ class RecommendationAgent:
 
     def _save_to_db(self, recommendations: List[Dict]):
         """추천 결과를 날짜별로 저장 (동일 날짜+종목은 덮어쓰기)"""
+        if not recommendations:
+            return
         session_date = date.today().isoformat()
         with db_manager.get_connection() as conn:
             cursor = conn.cursor()

@@ -1,6 +1,6 @@
 """종목 분석 라우터 — GET|POST /api/analysis/{code}"""
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from koreanstocks.api.dependencies import get_db, get_analysis_agent, get_data_provider
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def get_analysis(code: str, db=Depends(get_db)):
 
 
 @router.get("/analysis/{code}/history")
-def get_analysis_history(code: str, limit: int = 5, db=Depends(get_db)):
+def get_analysis_history(code: str, limit: int = Query(5, ge=1, le=100), db=Depends(get_db)):
     """종목 분석 이력 (최근 N건)"""
     try:
         return db.get_analysis_history(code, limit=limit)

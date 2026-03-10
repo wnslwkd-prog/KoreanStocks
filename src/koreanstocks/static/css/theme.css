@@ -346,6 +346,34 @@ select option { background: var(--bg-dark); }
 .hm-high { background: var(--hm-high-bg); color: var(--hm-high-fg); font-weight: 700; }
 
 .streak-badge { font-size: 0.65em; }
+.repeat-badge { font-size: 0.65em; color: var(--hold); margin-left: 2px; }
+
+/* 히트맵 행 강조 — 좌측 컬러 보더로 유형 구분 */
+.hm-row-hot    td.stock-label { border-left: 3px solid var(--buy);    padding-left: 7px; }
+.hm-row-streak td.stock-label { border-left: 3px solid var(--accent); padding-left: 7px; }
+.hm-row-repeat td.stock-label { border-left: 3px solid var(--hold);   padding-left: 7px; }
+
+/* 히트맵 범례 */
+.heatmap-legend {
+  margin-top: 8px;
+  font-size: 0.76em;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.hm-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+.hm-legend-hot    { background: var(--buy); }
+.hm-legend-streak { background: var(--accent); }
+.hm-legend-repeat { background: var(--hold); }
 
 /* ── Watchlist 종목 카드 ──────────────────────── */
 .wl-card {

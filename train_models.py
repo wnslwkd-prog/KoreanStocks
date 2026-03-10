@@ -22,8 +22,8 @@ def parse_args():
         help='학습 데이터 기간 (기본값: 2y)'
     )
     parser.add_argument(
-        '--future-days', type=int, default=5,
-        help='예측 대상 기간 (거래일 수, 기본값: 5)'
+        '--future-days', type=int, default=10,
+        help='예측 대상 기간 (거래일 수, 기본값: 10)'
     )
     parser.add_argument(
         '--stocks', nargs='+', default=None,

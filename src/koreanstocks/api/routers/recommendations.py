@@ -42,7 +42,7 @@ def list_recommendations(
 
 
 @router.get("/recommendations/dates")
-def recommendation_dates(limit: int = Query(30), db=Depends(get_db)):
+def recommendation_dates(limit: int = Query(30, ge=1, le=365), db=Depends(get_db)):
     """추천 데이터가 존재하는 날짜 목록 (최근순)"""
     return db.get_recommendation_dates(limit=limit)
 
@@ -107,8 +107,13 @@ def recommendation_outcomes(
     stats    — 기간 내 집계 통계 (정답률, 평균 수익률, 목표가 달성률)
     outcomes — 종목별 개별 성과 목록
     """
-    from koreanstocks.core.utils.outcome_tracker import get_outcome_stats, get_recent_outcomes
-    return {
-        "stats":    get_outcome_stats(days=days),
-        "outcomes": get_recent_outcomes(days=days),
-    }
+    from fastapi import HTTPException
+    try:
+        from koreanstocks.core.utils.outcome_tracker import get_outcome_stats, get_recent_outcomes
+        return {
+            "stats":    get_outcome_stats(days=days),
+            "outcomes": get_recent_outcomes(days=days),
+        }
+    except Exception as e:
+        logger.error(f"성과 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

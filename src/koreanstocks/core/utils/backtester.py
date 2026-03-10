@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional
 from koreanstocks.core.config import config
 
 class Backtester:
@@ -11,7 +11,7 @@ class Backtester:
         self.fee = config.TRANSACTION_FEE
         self.tax = config.TAX_RATE
 
-    def run(self, df: pd.DataFrame, signals: pd.Series, initial_capital: float = None) -> Dict[str, Any]:
+    def run(self, df: pd.DataFrame, signals: pd.Series, initial_capital: Optional[float] = None) -> Dict[str, Any]:
         """
         백테스팅 실행
         :param df: OHLCV 데이터프레임
@@ -20,50 +20,60 @@ class Backtester:
         :return: 성과 지표 딕셔너리
         """
         capital = initial_capital if initial_capital is not None else self.initial_capital
-        
+
+        if capital <= 0:
+            return {"error": "initial_capital must be positive"}
         if df.empty or len(df) != len(signals):
             return {"error": "Invalid data or signals"}
+        if 'close' not in df.columns:
+            return {"error": "df must contain 'close' column"}
 
-        results = df.copy()
-        results['signal'] = signals
-        
+        results = df[['close']].copy()
+        # values로 위치 기반 할당 — 인덱스 불일치 시 NaN 발생 방지
+        results['signal'] = signals.values
+
         # 수익률 계산 (Daily Returns)
         results['pct_change'] = results['close'].pct_change()
-        
+
         # 전략 수익률
         results['strategy_returns'] = results['signal'].shift(1) * results['pct_change']
-        
-        # 거래 비용 반영
-        results['trade'] = results['signal'].diff().abs().fillna(0)
+
+        # 거래 비용 반영 — 첫 행은 diff()가 NaN이므로 초기 포지션 진입 비용 별도 처리
+        trade = results['signal'].diff().abs()
+        trade.iat[0] = abs(results['signal'].iat[0])
+        results['trade'] = trade.fillna(0)
         cost_mask = results['trade'] > 0
         results.loc[cost_mask, 'strategy_returns'] -= (self.fee + self.tax)
 
         # 누적 수익률 및 자본금 계산
         strategy_returns = results['strategy_returns'].fillna(0)
+        # 초기 포지션 진입 비용: strategy_returns[0]은 shift로 NaN → fillna 후 별도 차감
+        # results['strategy_returns']에도 동기화하여 win_rate·Sharpe 계산과 일관성 유지
+        if results['trade'].iat[0] > 0:
+            strategy_returns.iat[0] -= (self.fee + self.tax)
+            results['strategy_returns'].iat[0] = strategy_returns.iat[0]
         results['cum_returns'] = (1 + strategy_returns).cumprod()
-        
-        # 첫 번째 행을 원금(1.0)으로 초기화하여 그래프 가독성 향상
-        if not results.empty:
-            results.iloc[0, results.columns.get_loc('cum_returns')] = 1.0
-            
         results['cum_capital'] = results['cum_returns'] * capital
 
         # 성과 지표
-        total_return = (results['cum_returns'].iloc[-1] - 1) * 100
+        last_cum = results['cum_returns'].iloc[-1]
+        total_return = (last_cum - 1) * 100 if pd.notna(last_cum) else 0.0
         rolling_max = results['cum_returns'].cummax()
         drawdown = results['cum_returns'] / rolling_max - 1
-        mdd = drawdown.min() * 100
+        mdd_raw = drawdown.min()
+        mdd = mdd_raw * 100 if pd.notna(mdd_raw) else 0.0
 
-        win_rate = (results['strategy_returns'] > 0).sum() / (results['strategy_returns'] != 0).sum() if (results['strategy_returns'] != 0).sum() > 0 else 0
+        nonzero_count = (results['strategy_returns'] != 0).sum()
+        win_rate = (results['strategy_returns'] > 0).sum() / nonzero_count if nonzero_count > 0 else 0.0
         std = results['strategy_returns'].std()
-        sharpe = (results['strategy_returns'].mean() / std) * np.sqrt(config.TRADING_DAYS_PER_YEAR) if std != 0 else 0
+        sharpe = (results['strategy_returns'].mean() / std) * np.sqrt(config.TRADING_DAYS_PER_YEAR) if std != 0 else 0.0
 
         return {
             "total_return_pct": round(total_return, 2),
             "mdd_pct": round(mdd, 2),
             "win_rate": round(win_rate * 100, 2),
             "sharpe_ratio": round(sharpe, 2),
-            "final_capital": int(results['cum_capital'].iloc[-1]),
+            "final_capital": int(round(results['cum_capital'].iloc[-1])) if pd.notna(results['cum_capital'].iloc[-1]) else 0,
             "daily_results": results[['close', 'signal', 'cum_returns', 'cum_capital']]
         }
 
