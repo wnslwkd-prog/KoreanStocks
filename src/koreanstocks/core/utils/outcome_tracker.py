@@ -123,12 +123,79 @@ def _check_target_hit(
 # 공개 API
 # ──────────────────────────────────────────────
 
+def _backfill_target_hit() -> int:
+    """20거래일 결과는 있으나 target_hit 가 NULL 인 레코드를 소급 업데이트.
+
+    target_hit 기능 도입 이전에 이미 correct_20d 가 저장된 레코드가 대상.
+    BUY/SELL 이고 target_price 가 유효한 경우만 처리.
+
+    Returns:
+        업데이트된 레코드 수.
+    """
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                o.code,
+                o.session_date,
+                o.action,
+                o.target_price
+            FROM recommendation_outcomes o
+            WHERE o.correct_20d IS NOT NULL
+              AND o.target_hit   IS NULL
+              AND o.action       IN ('BUY', 'SELL')
+              AND o.target_price IS NOT NULL
+              AND o.target_price  > 0
+            ORDER BY o.session_date ASC
+            """
+        )
+        pending = cursor.fetchall()
+
+    if not pending:
+        return 0
+
+    logger.info(f"[backfill] target_hit 소급 처리 대상: {len(pending)}건")
+    filled = 0
+    for code, session_date, action, target_price in pending:
+        try:
+            target_price = float(target_price)
+        except (ValueError, TypeError):
+            continue
+
+        hit = _check_target_hit(code, session_date, HORIZONS[-1], target_price, action)
+        if hit is None:
+            continue
+
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "UPDATE recommendation_outcomes "
+                    "SET target_hit = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE code = ? AND session_date = ?",
+                    (hit, code, session_date),
+                )
+                conn.commit()
+                filled += 1
+                logger.debug(f"[backfill] [{code}] {session_date} target_hit={hit}")
+            except Exception as e:
+                logger.error(f"[backfill] DB 저장 실패 [{code}, {session_date}]: {e}", exc_info=True)
+                conn.rollback()
+
+    logger.info(f"[backfill] target_hit 소급 완료: {filled}건")
+    return filled
+
+
 def record_outcomes() -> int:
     """아직 결과가 기록되지 않은 추천의 5·10·20거래일 후 성과를 DB에 업데이트.
 
     Returns:
         새로 업데이트(또는 삽입)된 추천 레코드 수.
     """
+    # target_hit 기능 도입 전 레코드 소급 처리
+    _backfill_target_hit()
+
     # 20거래일 결과가 없는 모든 추천 조회
     # SELECT 뒤 price_Xd 컬럼 순서는 HORIZONS = [5, 10, 20] 과 반드시 일치
     with db_manager.get_connection() as conn:

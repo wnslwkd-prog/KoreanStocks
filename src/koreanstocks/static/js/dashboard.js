@@ -1535,10 +1535,10 @@ function _outcomeStatsHtml(stats, isRetry = false) {
         <div class="rc-val ${thr >= 50 ? "pos" : "neg"}">${thr.toFixed(0)}%</div>
         <div class="rc-delta" style="color:var(--muted)">20거래일 내 장중 기준</div>
       </div>`
-    : `<div class="result-card" title="20거래일 이내 장중 고가(BUY)/저가(SELL) 기준으로 목표가 도달 여부를 판정합니다">
+    : `<div class="result-card" title="20거래일 이내 장중 고가(BUY)/저가(SELL) 기준으로 목표가 도달 여부를 판정합니다. 추천 후 20거래일(약 4주)이 경과해야 산출됩니다.">
         <div class="rc-label">🎯 목표가 달성률</div>
         <div class="rc-val" style="color:var(--muted)">—</div>
-        <div class="rc-delta" style="color:var(--muted)">집계중</div>
+        <div class="rc-delta" style="color:var(--muted)">20거래일 경과 후 산출</div>
       </div>`;
 
   // 정답률 카드: title에 측정 기준 명시 (statCard 래퍼로 title 전달)

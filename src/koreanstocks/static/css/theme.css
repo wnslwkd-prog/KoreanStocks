@@ -32,6 +32,9 @@
   --bucket-vol-bg:  rgba(42,111,168,.22);  --bucket-vol-fg:  #7ec8e3;  --bucket-vol-bd:  rgba(42,111,168,.5);
   --bucket-mom-bg:  rgba(42,138,42,.22);   --bucket-mom-fg:  #7ed87e;  --bucket-mom-bd:  rgba(42,138,42,.5);
   --bucket-reb-bg:  rgba(200,130,30,.22);  --bucket-reb-fg:  #e8b84b;  --bucket-reb-bd:  rgba(200,130,30,.5);
+  /* 히트맵 등급별 색상 (SS·S=주황, A·B=파랑, Cp=보라, C·D=hold) */
+  --hm-streak-color: #58a6ff;  /* A·B 연속 2일 — 파랑 */
+  --hm-cp-color:     #bc8cff;  /* Cp 과거 강연속 — 보라 */
 }
 
 /* ── 라이트 테마 오버라이드 ── */
@@ -65,6 +68,9 @@
   --bucket-vol-bg:  rgba(5,80,174,.10);    --bucket-vol-fg:  #0550ae;  --bucket-vol-bd:  rgba(5,80,174,.35);
   --bucket-mom-bg:  rgba(26,127,55,.10);   --bucket-mom-fg:  #1a7f37;  --bucket-mom-bd:  rgba(26,127,55,.35);
   --bucket-reb-bg:  rgba(154,103,0,.10);   --bucket-reb-fg:  #7d5300;  --bucket-reb-bd:  rgba(154,103,0,.35);
+  /* 히트맵 등급별 색상 — 라이트 테마 */
+  --hm-streak-color: #0969da;  /* A·B — 진한 파랑 */
+  --hm-cp-color:     #8250df;  /* Cp  — 진한 보라 */
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -345,11 +351,11 @@ select option { background: var(--bg-dark); }
 .hm-mid  { background: var(--hm-mid-bg);  color: var(--hm-mid-fg); }
 .hm-high { background: var(--hm-high-bg); color: var(--hm-high-fg); font-weight: 700; }
 
-.streak-badge     { font-size: 0.65em; color: var(--buy);  margin-left: 2px; }
-.streak-badge-em  { font-size: 0.65em; color: var(--buy);  margin-left: 2px; font-weight: 700; }
-.streak-badge-hot { font-size: 0.65em; color: #f0883e;      margin-left: 2px; font-weight: 600; }
-.repeat-badge     { font-size: 0.65em; color: var(--hold);   margin-left: 2px; }
-.repeat-badge-cp  { font-size: 0.65em; color: var(--accent); margin-left: 2px; font-weight: 700; }
+.streak-badge     { font-size: 0.65em; color: var(--hm-streak-color);  margin-left: 2px; }
+.streak-badge-em  { font-size: 0.65em; color: var(--hm-streak-color);  margin-left: 2px; font-weight: 700; }
+.streak-badge-hot { font-size: 0.65em; color: #f0883e;                  margin-left: 2px; font-weight: 600; }
+.repeat-badge     { font-size: 0.65em; color: var(--hold);              margin-left: 2px; }
+.repeat-badge-cp  { font-size: 0.65em; color: var(--hm-cp-color);      margin-left: 2px; font-weight: 700; }
 
 /* 버킷 일관성 배지 */
 .bucket-consist-badge { font-size: 0.62em; color: var(--muted); margin-left: 3px; opacity: 0.85; }
@@ -366,12 +372,12 @@ select option { background: var(--bg-dark); }
 /* 연속 3일+: 주황 계열 (강렬·눈에 띔) + 행 배경 틴트 */
 .hm-row-hot    { background: rgba(240, 136, 62, 0.06); }
 .hm-row-hot    td.stock-label { border-left: 4px solid #f0883e; padding-left: 6px; font-weight: 600; }
-/* 연속 2일: 초록 계열 */
-.hm-row-streak td.stock-label { border-left: 3px solid var(--buy);  padding-left: 7px; }
+/* 연속 2일: 파랑 계열 */
+.hm-row-streak td.stock-label { border-left: 3px solid var(--hm-streak-color);  padding-left: 7px; }
 /* 비연속 반복: 노랑 계열 */
 .hm-row-repeat td.stock-label { border-left: 3px solid var(--hold); padding-left: 7px; }
-/* 과거 강연속(Cp): teal 계열 — hm-row-repeat 이후 선언으로 색상 오버라이드 */
-.hm-row-cp td.stock-label { border-left-color: var(--accent); }
+/* 과거 강연속(Cp): 보라 계열 — hm-row-repeat 이후 선언으로 색상 오버라이드 */
+.hm-row-cp td.stock-label { border-left-color: var(--hm-cp-color); }
 /* 이력 풍부 강조 (SS·A·Cp 등급): 보더 굵기 5px */
 .hm-row-strong td.stock-label { border-left-width: 5px; padding-left: 5px; }
 
@@ -394,8 +400,8 @@ select option { background: var(--bg-dark); }
   vertical-align: middle;
 }
 .hm-legend-hot       { background: #f0883e; }
-.hm-legend-streak    { background: var(--buy); }
-.hm-legend-repeat-cp { background: var(--accent); }
+.hm-legend-streak    { background: var(--hm-streak-color); }
+.hm-legend-repeat-cp { background: var(--hm-cp-color); }
 .hm-legend-repeat    { background: var(--hold); }
 
 /* ── Watchlist 종목 카드 ──────────────────────── */
