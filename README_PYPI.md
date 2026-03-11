@@ -1,7 +1,7 @@
 # 📈 Korean Stocks AI/ML Analysis System
 
 ![version](https://img.shields.io/badge/version-0.4.3-blue)
-![python](https://img.shields.io/badge/python-3.11~3.13-green)
+![python](https://img.shields.io/badge/python-3.11-3.13-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 > **KOSPI · KOSDAQ 종목을 AI와 머신러닝으로 분석하는 자동화 투자 보조 플랫폼**
@@ -36,7 +36,7 @@
 
 매일 장 마감 후 자동으로 실행되어 KOSPI·KOSDAQ 전 종목 중 **거래량 상위 · 상승 모멘텀 · 반등 후보** 버킷으로 분류된 종목을 스크리닝하고, 심층 분석 후 텔레그램으로 결과를 전송합니다.
 
-단기 AI 추천 외에, DART 공시 기반 펀더멘털과 **Piotroski F-Score**를 활용한 **가치주 스크리닝**(중기 3~6개월), ROE·영업이익률·재무건전성 기반의 **우량주 스크리닝**(장기 6개월+)도 지원합니다.
+단기 AI 추천 외에, DART 공시 기반 펀더멘털과 **Piotroski F-Score**를 활용한 **가치주 스크리닝**(중기 3-6개월), ROE·영업이익률·재무건전성 기반의 **우량주 스크리닝**(장기 6개월+)도 지원합니다.
 
 ---
 
@@ -76,7 +76,7 @@ ML 피처     20개 (변동성·추세강도·시장 상대강도·모멘텀·fi
 DB          SQLite (data/storage/stock_analysis.db)
 자동화       GitHub Actions (평일 16:30 KST), Telegram Bot API
 시각화       Plotly, Matplotlib, Chart.js (백테스트 차트)
-언어         Python 3.11 ~ 3.13
+언어         Python 3.11 - 3.13
 ```
 
 ---
@@ -125,7 +125,7 @@ DB          SQLite (data/storage/stock_analysis.db)
 
 ## 🔬 분석 파이프라인
 
-### 단기 AI 추천 파이프라인 (1~2주)
+### 단기 AI 추천 파이프라인 (1-2주)
 
 #### 버킷 기반 후보군 선정
 
@@ -133,7 +133,7 @@ DB          SQLite (data/storage/stock_analysis.db)
 FinanceDataReader + KIND API (KOSPI · KOSDAQ 전체 종목)
   → 시장 필터 (KOSPI / KOSDAQ / ALL)
      ├─ 🟦 거래량 상위    40% 쿼터
-     ├─ 🟩 상승 모멘텀    +2%~+15%,  35% 쿼터
+     ├─ 🟩 상승 모멘텀    +2%-+15%,  35% 쿼터
      └─ 🟥 반등 후보      거래량 상위 중 하락,  25% 쿼터
   → 분석 풀 구성: min(limit × 8, 80)개
     ※ 기본 limit=9 → 최대 72종목
@@ -145,15 +145,15 @@ FinanceDataReader + KIND API (KOSPI · KOSDAQ 전체 종목)
 분석 풀 (최대 80종목)
   → 병렬 분석 (max_workers=5 · timeout=60s)
 
-  1단계  기술적 지표   → tech_score  (0~100)
+  1단계  기술적 지표   → tech_score  (0-100)
          추세(40pt) + 모멘텀(30pt) + BB/CMF/거래량(30pt)
 
-  2단계  ML 앙상블    → ml_score   (0~100)
+  2단계  ML 앙상블    → ml_score   (0-100)
          RF · GB · LGB · CB (분류기 75%)
          + XGBRanker (랜커 25%)
-         → 101분위수 캘리브레이션 → 0~100 균등 스케일
+         → 101분위수 캘리브레이션 → 0-100 균등 스케일
 
-  3단계  뉴스 감성    → sentiment_score (-100~100)
+  3단계  뉴스 감성    → sentiment_score (-100-100)
          GPT-4o-mini · 지수감쇠 시간가중치
 
   4단계  GPT AI 의견  → BUY / HOLD / SELL · 목표가 · 강점·약점
@@ -172,12 +172,12 @@ ML 모델 활성 시:
 ML 모델 없을 시 (폴백):
   종합 점수 = Tech × 0.65 + sentiment_norm × 0.35
 
-  ※ sentiment_norm = (sentiment_score + 100) / 2  →  0~100 정규화
+  ※ sentiment_norm = (sentiment_score + 100) / 2  →  0-100 정규화
 ```
 
 ---
 
-### 2단계 — ML 앙상블 (ml_score, 0~100)
+### 2단계 — ML 앙상블 (ml_score, 0-100)
 
 #### 입력 피처 (20개)
 
@@ -202,7 +202,7 @@ ML 모델 없을 시 (폴백):
   └─ XGBoost Ranker    (rank:ndcg) ─────────────────────────────► (25%)
                                         │
                                         ▼
-                              101분위수 캘리브레이션 → ml_score (0~100 균등)
+                              101분위수 캘리브레이션 → ml_score (0-100 균등)
 ```
 
 **ML 학습 설정:**
@@ -212,7 +212,7 @@ ML 모델 없을 시 (폴백):
 
 ---
 
-### 가치주 스크리닝 파이프라인 (중기 3~6개월)
+### 가치주 스크리닝 파이프라인 (중기 3-6개월)
 
 ```
 1. Naver 시가총액 순위 페이지 병렬 스크래핑
@@ -229,9 +229,9 @@ ML 모델 없을 시 (폴백):
    영업이익YoY ≥ -15% · F-Score ≥ 4
 
 5. Piotroski F-Score 산출 (9점 만점)
-   수익성(P1~P3) + 안전성(L1~L3) + 성장성(E1~E3)
+   수익성(P1-P3) + 안전성(L1-L3) + 성장성(E1-E3)
 
-6. value_score 산출 (0~100점)
+6. value_score 산출 (0-100점)
    PER(25) + PBR(15) + ROE(20) + 부채비율(15) + 영업이익YoY(30) + 배당(10)
 
 7. 복합 정렬: value_score × 0.7 + F-Score_normalized × 0.3
@@ -242,13 +242,13 @@ ML 모델 없을 시 (폴백):
 
 | 구분 | 항목 | 기준 |
 |------|------|------|
-| **수익성 (P1~P3)** | P1 ROA | 당기순이익 / 총자산 > 0 |
+| **수익성 (P1-P3)** | P1 ROA | 당기순이익 / 총자산 > 0 |
 | | P2 영업현금흐름 | 영업이익 > 0 |
 | | P3 ROA 개선 | 전년 대비 ROA 증가 |
-| **안전성 (L1~L3)** | L1 부채비율 감소 | 전년 대비 부채비율 하락 |
+| **안전성 (L1-L3)** | L1 부채비율 감소 | 전년 대비 부채비율 하락 |
 | | L2 유동비율 개선 | 부채비율 하락 (대리지표) |
 | | L3 무상증자 없음 | PBR 정상 범위 |
-| **성장성 (E1~E3)** | E1 영업이익률 개선 | 전년 대비 영업이익률 상승 |
+| **성장성 (E1-E3)** | E1 영업이익률 개선 | 전년 대비 영업이익률 상승 |
 | | E2 자산회전율 개선 | 전년 대비 매출/총자산 증가 |
 | | E3 OCF > 순이익 | 영업이익YoY > 5% (대리지표) |
 
@@ -271,7 +271,7 @@ ML 모델 없을 시 (폴백):
    ROE ≥ roe_min · 영업이익률 ≥ op_margin_min
    영업이익YoY ≥ yoy_min · 부채비율 ≤ debt_max · PBR ≤ pbr_max
 
-5. quality_score 산출 (0~100점)
+5. quality_score 산출 (0-100점)
    ROE(30) + 영업이익률(25) + 영업이익YoY(20) + 부채비율(15) + 배당(10)
 
 6. ROE 2개년 평균 — 일시적 고ROE 필터링, 지속 성장 기업 확인
@@ -284,7 +284,7 @@ ML 모델 없을 시 (폴백):
 
 ## 📊 점수 체계 해석
 
-### Tech Score (기술적 지표 종합, 0~100)
+### Tech Score (기술적 지표 종합, 0-100)
 
 | 점수 | 해석 |
 |------|------|
@@ -296,16 +296,16 @@ ML 모델 없을 시 (폴백):
 **세부 구성 (합계 100점)**
 
 | 구성 | 최대 | 주요 지표 |
-|------|------||-----------|
+|------|------|-----------|
 | ① 추세 | 40점 | SMA5/20/60, MACD 골든크로스, ADX DI+/DI− |
 | ② 모멘텀 | 30점 | RSI × MACD 방향 맥락 보정, BB 폭 보정 |
 | ③ 위치·자금흐름 | 30점 | BB 위치(20), CMF(5), 거래량 확인(5) |
 
-> MACD 방향에 따라 RSI 최적 구간이 반전됩니다 (상승추세: 55~75 최적 / 하락추세: 35~50 최적).
+> MACD 방향에 따라 RSI 최적 구간이 반전됩니다 (상승추세: 55-75 최적 / 하락추세: 35-50 최적).
 
 ---
 
-### ML Score (머신러닝 예측, 0~100)
+### ML Score (머신러닝 예측, 0-100)
 
 10거래일 후 수익률 **상위 25% 진입 확률**의 캘리브레이션 점수.
 
@@ -313,24 +313,24 @@ ML 모델 없을 시 (폴백):
 |------|------|
 | 70–100 | 강한 상승 기대 (상위 25% 고확률) |
 | 50–69 | 중간 이상 — 양호 |
-| 30–49 | 중립~약세 |
+| 30–49 | 중립-약세 |
 | 0–29 | 하위권 예상 |
 
 ---
 
-### News Sentiment Score (뉴스 감성, -100~100)
+### News Sentiment Score (뉴스 감성, -100-100)
 
 | 점수 | 해석 |
 |------|------|
 | 51–100 | Very Bullish (매우 긍정) |
 | 1–50 | Bullish (긍정) |
 | 0 | Neutral |
-| -49~-1 | Bearish (부정) |
-| -100~-50 | Very Bearish (매우 부정) |
+| -49--1 | Bearish (부정) |
+| -100--50 | Very Bearish (매우 부정) |
 
 ---
 
-### Value Score (가치주, 0~100)
+### Value Score (가치주, 0-100)
 
 | 항목 | 배점 | 최고점 기준 |
 |------|------|------------|
@@ -352,7 +352,7 @@ ML 모델 없을 시 (폴백):
 
 ---
 
-### Quality Score (우량주, 0~100)
+### Quality Score (우량주, 0-100)
 
 | 항목 | 배점 | 최고점 기준 |
 |------|------|------------|
@@ -378,11 +378,11 @@ ML 모델 없을 시 (폴백):
 > 대시보드 URL: `http://localhost:8000/dashboard`
 
 | 탭 | 주요 기능 | 투자 관점 |
-|----|----------|-----------||
+|----|----------|-----------|
 | **① Dashboard** | 시장지수, AI 추천, 추천 지속성 히트맵 🔥🔄📌 | 당일 현황 파악 |
 | **② Watchlist** | 관심종목 등록·삭제, 실시간 심층 분석, 분석 이력 타임라인 | 지속 모니터링 |
-| **③ AI 추천** | 테마·시장별 추천 생성, 날짜 선택 히스토리, 5·10·20거래일 성과 추적 | 단기 1~2주 |
-| **④ 가치주 추천** | PER·PBR·ROE·부채비율·F-Score 필터, value_score 복합 정렬, 탐색 범위 선택 | 중기 3~6개월 |
+| **③ AI 추천** | 테마·시장별 추천 생성, 날짜 선택 히스토리, 5·10·20거래일 성과 추적 | 단기 1-2주 |
+| **④ 가치주 추천** | PER·PBR·ROE·부채비율·F-Score 필터, value_score 복합 정렬, 탐색 범위 선택 | 중기 3-6개월 |
 | **⑤ 우량주 추천** | ROE·영업이익률·YoY·부채비율 필터, quality_score 정렬, ROE 2개년 지속성 | 장기 6개월+ |
 | **⑥ 백테스트** | RSI / MACD / COMPOSITE 전략 시뮬레이션, 단순보유 비교 차트 | 전략 검증 |
 | **⑦ 모델 신뢰도** | 5모델 AUC · 과적합 갭 · 드리프트 등급 · 피처 중요도 · 재학습 권장 | 신호 신뢰성 판단 |
@@ -398,8 +398,8 @@ ML 모델 없을 시 (폴백):
 
 | 투자 기간 | 추천 탭 | 핵심 기준 |
 |-----------|---------|-----------|
-| **단기 (1~2주)** | AI 추천 탭 | 종합 점수 65+ · BUY 신호 · tech+ml 동시 강세 |
-| **중기 (3~6개월)** | 가치주 추천 탭 | value_score 60+ · F-Score 6+ · PER ≤ 15 · ROE ≥ 10% |
+| **단기 (1-2주)** | AI 추천 탭 | 종합 점수 65+ · BUY 신호 · tech+ml 동시 강세 |
+| **중기 (3-6개월)** | 가치주 추천 탭 | value_score 60+ · F-Score 6+ · PER ≤ 15 · ROE ≥ 10% |
 | **장기 (6개월+)** | 우량주 추천 탭 | quality_score 70+ · ROE 2개년 ≥ 15% · 영업이익률 ≥ 15% |
 
 > **두 신호 이상 일치 시 최우선 검토 대상** (예: 단기 BUY + 가치주 상위권 동시 진입)
@@ -409,7 +409,7 @@ ML 모델 없을 시 (폴백):
 ```
 Step 1 — 스크리닝 (매일 자동)
   → 텔레그램 알림으로 오늘의 추천 9종목 확인
-  → 종합 점수 상위 2~3종목을 후보로 선정
+  → 종합 점수 상위 2-3종목을 후보로 선정
 
 Step 2 — 지속성 확인 (신뢰도 검증)
   → 추천 지속성 히트맵에서 연속 추천 일수 확인
@@ -441,7 +441,7 @@ Step 5 — 최종 판단 기준
   ✅ ML Score ≥ 60
   ✅ News Score > 20
   ✅ AI action = BUY
-  ✅ RSI: 35~50 구간 (과매도 탈출 또는 중립 하단)
+  ✅ RSI: 35-50 구간 (과매도 탈출 또는 중립 하단)
   ✅ MACD: 골든크로스 발생 또는 유지
 
 관망 권고
@@ -458,10 +458,10 @@ Step 5 — 최종 판단 기준
 
 | 원칙 | 설명 |
 |------|------|
-| **분산 투자** | 동일 섹터에 몰리지 않도록 1~2종목만 선택 |
-| **손절 기준** | 매수가 대비 7~8% 하락 시 손절 고려 |
+| **분산 투자** | 동일 섹터에 몰리지 않도록 1-2종목만 선택 |
+| **손절 기준** | 매수가 대비 7-8% 하락 시 손절 고려 |
 | **비중 관리** | 단일 종목에 총 자산의 10% 이상 집중 지양 |
-| **재검증** | 매수 후 3~5일 내 재분석으로 의견 변화 모니터링 |
+| **재검증** | 매수 후 3-5일 내 재분석으로 의견 변화 모니터링 |
 
 ---
 
@@ -485,7 +485,7 @@ koreanstocks sync    # GitHub Actions 생성 DB 다운로드
 koreanstocks serve   # http://localhost:8000/dashboard 자동 열림
 ```
 
-> `.env`·DB·ML 모델은 `~/.koreanstocks/`에 저장됩니다.
+> `.env`·DB·ML 모델은 `-/.koreanstocks/`에 저장됩니다.
 
 #### pipx로 설치 (CLI 격리 권장)
 
@@ -575,7 +575,7 @@ koreanstocks outcomes                  # 미검증 결과 업데이트 + 통계 
 koreanstocks outcomes --days 180       # 최근 180일 조회
 koreanstocks outcomes --no-record      # DB 업데이트 없이 통계만
 
-# 가치주 스크리닝 (중기 3~6개월)
+# 가치주 스크리닝 (중기 3-6개월)
 koreanstocks value                     # 기본 필터 (상위 20종목)
 koreanstocks value --per-max 15 --roe-min 10
 koreanstocks value --f-score-min 6 --candidate-limit 300
@@ -592,7 +592,7 @@ koreanstocks home --setup              # 셸 alias 스니펫 출력
 
 # 테스트
 pytest tests/
-python tests/compat_check.py          # Python 3.11~3.13 호환성 검증
+python tests/compat_check.py          # Python 3.11-3.13 호환성 검증
 ```
 
 ---
@@ -727,7 +727,7 @@ KoreanStocks/
 │   └── QUALITY_SCREENING.md             # 우량주 스크리닝 기술 문서
 ├── tests/
 │   ├── test_backtester.py               # 백테스터 단위 테스트
-│   └── compat_check.py                  # Python 3.11~3.13 호환성 검증
+│   └── compat_check.py                  # Python 3.11-3.13 호환성 검증
 └── .github/workflows/
     └── daily_analysis.yml               # GitHub Actions 스케줄러
 ```
@@ -762,7 +762,7 @@ KoreanStocks/
 - ✨ `GET /api/quality_stocks` 엔드포인트 신설
 - ✨ 추천 지속성 히트맵 개선 — 연속 추천(🔥)과 비연속 반복 추천(🔄/📌) 구분 배지 + 점수 범례 추가
 - 🔧 ML 피처 3개 추가: `obv_trend`, `rsi`, `cci_pct` — 17→20개
-- 🔧 ML Walk-Forward CV: VAL_STEP 20→10 거래일 (fold ~24→~48), Purging 10→20거래일 강화
+- 🔧 ML Walk-Forward CV: VAL_STEP 20→10 거래일 (fold -24→-48), Purging 10→20거래일 강화
 - 🔧 ML 모델 depth 조정: RF max_depth 4→5, CatBoost depth 2→3
 - 🔧 앙상블 Softmax 가중치 정규화, Classifier·Ranker 분리 집계 (75%:25%)
 - 🐛 `bool(numpy.bool_)` JSON 직렬화 오류 수정 (Python 3.13 + NumPy 2.x 호환)
@@ -777,7 +777,7 @@ KoreanStocks/
 - 🔧 `value_screener.py` 당일 인메모리 캐시 추가
 - 📝 `docs/VALUE_SCREENING.md` 신설
 
-### v0.3.x (2026-02-28 ~ 2026-03-05) — 추천 성과 추적 · 5-모델 앙상블 · pykrx 제거
+### v0.3.x (2026-02-28 - 2026-03-05) — 추천 성과 추적 · 5-모델 앙상블 · pykrx 제거
 
 - ✨ 추천 성과 추적 (5·10·20거래일 후 실적 검증, `outcomes` CLI 및 Web UI)
 - ✨ 버킷 배지 UI (거래량 상위/상승 모멘텀/반등 후보) — 대시보드·슬라이드 동시 반영
