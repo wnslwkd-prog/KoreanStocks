@@ -2,12 +2,38 @@ import pandas as pd
 import numpy as np
 import requests
 import FinanceDataReader as fdr
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeout
 from datetime import datetime, timedelta, date as date_type
 import logging
+import threading
 import time
 from functools import lru_cache
+import math
 from typing import List, Dict, Optional
+
+# ── FDR DataReader daemon-thread 타임아웃 헬퍼 ───────────────────────────
+# daemon=True 스레드를 사용하므로 Python 프로세스 종료 시 atexit가 join()하지 않는다.
+# (non-daemon ThreadPoolExecutor는 타임아웃 후에도 blocking read가 남아 exit hang 유발)
+_FDR_CALL_TIMEOUT = 25   # seconds
+
+
+def _fdr_run_with_timeout(fn, *args, timeout: float = _FDR_CALL_TIMEOUT, **kwargs):
+    """fn을 daemon 스레드에서 실행, timeout 초 초과 시 TimeoutError."""
+    holder: list = [None, None]  # [result, exception]
+
+    def _target():
+        try:
+            holder[0] = fn(*args, **kwargs)
+        except Exception as exc:
+            holder[1] = exc
+
+    t = threading.Thread(target=_target, daemon=True, name="fdr-call")
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError(f"FDR DataReader {timeout}s 타임아웃")
+    if holder[1] is not None:
+        raise holder[1]
+    return holder[0]
 
 from koreanstocks.core.config import config
 
@@ -174,6 +200,42 @@ class StockDataProvider:
             logger.error(f"KIND API 폴백 실패: {e}")
             return self._krx_cache if self._krx_cache is not None else _empty
 
+    def _naver_last_page(self, sosok: int, headers: dict) -> int:
+        """네이버 sise_market_sum 페이지 수 탐지 (KOSPI sosok=0, KOSDAQ sosok=1)."""
+        import re
+        from bs4 import BeautifulSoup
+        try:
+            r = requests.get(
+                'https://finance.naver.com/sise/sise_market_sum.naver',
+                params={'sosok': str(sosok), 'page': '1'},
+                headers=headers, timeout=10,
+            )
+            soup = BeautifulSoup(r.text, 'html.parser')
+            pager = soup.select('.pgRR a')
+            if pager:
+                m = re.search(r'page=(\d+)', pager[-1]['href'])
+                if m:
+                    return int(m.group(1))
+        except Exception:
+            pass
+        return 50
+
+    @staticmethod
+    def _naver_col_indices(soup) -> tuple:
+        """테이블 헤더에서 '등락률'·'거래량' 컬럼 인덱스를 탐지. 실패 시 기본값 반환."""
+        tbl = soup.select_one('table.type_2')
+        if not tbl:
+            return 4, 9
+        ths = tbl.select('thead th') or tbl.select('tr:first-child th')
+        chg_idx, vol_idx = 4, 9
+        for i, th in enumerate(ths):
+            txt = th.get_text(strip=True)
+            if '등락률' in txt:
+                chg_idx = i
+            elif '거래량' in txt:
+                vol_idx = i
+        return chg_idx, vol_idx
+
     # ── 거래량·등락률 수집 (KRX 차단 대응) ──────────────────────────────
 
     def _get_volume_change_df(self, valid_codes: set) -> pd.DataFrame:
@@ -251,40 +313,10 @@ class StockDataProvider:
         Returns: DataFrame(code, volume, change_pct) or empty DataFrame
         """
         import requests
-        import re
         import concurrent.futures as _cf
         from bs4 import BeautifulSoup
 
         _headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
-        def _last_page(sosok: int) -> int:
-            r = requests.get(
-                'https://finance.naver.com/sise/sise_market_sum.naver',
-                params={'sosok': str(sosok), 'page': '1'},
-                headers=_headers, timeout=10,
-            )
-            soup = BeautifulSoup(r.text, 'html.parser')
-            pager = soup.select('.pgRR a')
-            if pager:
-                m = re.search(r'page=(\d+)', pager[-1]['href'])
-                if m:
-                    return int(m.group(1))
-            return 50  # 폴백 상한
-
-        def _col_indices(soup) -> tuple[int, int]:
-            """테이블 헤더에서 '등락률'·'거래량' 컬럼 인덱스를 탐지. 실패 시 기본값 반환."""
-            tbl = soup.select_one('table.type_2')
-            if not tbl:
-                return 4, 9
-            ths = tbl.select('thead th') or tbl.select('tr:first-child th')
-            chg_idx, vol_idx = 4, 9  # 현행 Naver 구조 기본값
-            for i, th in enumerate(ths):
-                txt = th.get_text(strip=True)
-                if '등락률' in txt:
-                    chg_idx = i
-                elif '거래량' in txt:
-                    vol_idx = i
-            return chg_idx, vol_idx
 
         def _fetch_page(sosok: int, page: int) -> list:
             r = requests.get(
@@ -293,7 +325,7 @@ class StockDataProvider:
                 headers=_headers, timeout=10,
             )
             soup = BeautifulSoup(r.text, 'html.parser')
-            chg_idx, vol_idx = _col_indices(soup)
+            chg_idx, vol_idx = StockDataProvider._naver_col_indices(soup)
             rows = []
             for tr in soup.select('table.type_2 tbody tr'):
                 a = tr.select_one('td a[href*="code="]')
@@ -314,8 +346,8 @@ class StockDataProvider:
             return rows
 
         try:
-            kospi_pages  = _last_page(0)
-            kosdaq_pages = _last_page(1)
+            kospi_pages  = self._naver_last_page(0, _headers)
+            kosdaq_pages = self._naver_last_page(1, _headers)
             tasks = (
                 [(0, p) for p in range(1, kospi_pages  + 1)] +
                 [(1, p) for p in range(1, kosdaq_pages + 1)]
@@ -468,17 +500,22 @@ class StockDataProvider:
                     start_dt = end_dt - timedelta(days=365)
                 start = start_dt.strftime('%Y-%m-%d')
 
-            try:
-                df = fdr.DataReader(code, start, end)
-            except ValueError as _ve:
-                # FDR/KIND 내부 월 경계 날짜 계산 버그 (e.g. Feb 31)
-                # start를 +1일 조정 후 재시도
-                if 'day is out of range' in str(_ve):
-                    adjusted = (datetime.strptime(start, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
-                    logger.debug(f"[{code}] 날짜 경계 버그 재시도: {start} → {adjusted}")
-                    df = fdr.DataReader(code, adjusted, end)
-                else:
+            def _fdr_read(s=start, e=end):
+                try:
+                    return fdr.DataReader(code, s, e)
+                except ValueError as _ve:
+                    # FDR/KIND 내부 월 경계 날짜 계산 버그 (e.g. Feb 31)
+                    if 'day is out of range' in str(_ve):
+                        adjusted = (datetime.strptime(s, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+                        logger.debug(f"[{code}] 날짜 경계 버그 재시도: {s} → {adjusted}")
+                        return fdr.DataReader(code, adjusted, e)
                     raise
+
+            try:
+                df = _fdr_run_with_timeout(_fdr_read)
+            except TimeoutError:
+                logger.warning(f"[{code}] FDR DataReader {_FDR_CALL_TIMEOUT}s 타임아웃 — 건너뜀")
+                return pd.DataFrame()
             if df.empty:
                 return df
 
@@ -538,6 +575,40 @@ class StockDataProvider:
             self._market_timestamp = now
         return indices
 
+    def _get_ranking_static_fallback(self, market: str, limit: int) -> List[str]:
+        """DB 이력 + 정적 풀로 ranking 구성 (FDR/KIND 전종목 API 불가 시 최종 폴백)."""
+        try:
+            from koreanstocks.core.data.database import db_manager
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                if market != 'ALL':
+                    cursor.execute(
+                        "SELECT DISTINCT code FROM recommendations WHERE json_extract(detail_json, '$.market') = ? ORDER BY session_date DESC LIMIT ?",
+                        (market, limit),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT DISTINCT code FROM recommendations ORDER BY session_date DESC LIMIT ?",
+                        (limit,),
+                    )
+                db_codes = [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Market ranking DB 폴백 실패: {e}")
+            db_codes = []
+        if market == 'KOSPI':
+            static_pool = _STATIC_KOSPI_POOL
+        elif market == 'KOSDAQ':
+            static_pool = _STATIC_KOSDAQ_POOL
+        else:
+            static_pool = _STATIC_STOCK_POOL
+        db_set = set(db_codes)
+        combined = db_codes + [c for c in static_pool if c not in db_set]
+        logger.warning(
+            f"Market ranking: 정적 종목 풀 폴백 {len(combined[:limit])}개 "
+            f"(DB {len(db_codes)}건 + 정적 풀 보충, FDR/KIND 전종목 API 불가)"
+        )
+        return combined[:limit]
+
     def get_market_ranking(self, limit: int = 50, market: str = 'ALL') -> List[str]:
         """거래량 및 등락률 상위 종목 코드를 취합하여 반환 (market: 'ALL'|'KOSPI'|'KOSDAQ')"""
         try:
@@ -573,40 +644,7 @@ class StockDataProvider:
         except Exception as e:
             logger.error(f"Error fetching market ranking: {e}")
 
-        # ── 최종 폴백: DB 이력 + 정적 풀 ────────────────────────────────
-        try:
-            from koreanstocks.core.data.database import db_manager
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                if market != 'ALL':
-                    cursor.execute(
-                        "SELECT DISTINCT code FROM recommendations WHERE json_extract(detail_json, '$.market') = ? ORDER BY session_date DESC LIMIT ?",
-                        (market, limit),
-                    )
-                else:
-                    cursor.execute(
-                        "SELECT DISTINCT code FROM recommendations ORDER BY session_date DESC LIMIT ?",
-                        (limit,),
-                    )
-                db_codes = [row[0] for row in cursor.fetchall()]
-        except Exception as e3:
-            logger.error(f"Market ranking DB 폴백 실패: {e3}")
-            db_codes = []
-        # 최종 폴백: 정적 유동성 종목 풀로 보충 (FDR/KIND 전종목 API 불가 상황)
-        if market == 'KOSPI':
-            static_pool = _STATIC_KOSPI_POOL
-        elif market == 'KOSDAQ':
-            static_pool = _STATIC_KOSDAQ_POOL
-        else:
-            static_pool = _STATIC_STOCK_POOL
-        # DB 이력 코드 우선, 정적 풀로 나머지 보충
-        db_set = set(db_codes)
-        combined = db_codes + [c for c in static_pool if c not in db_set]
-        logger.warning(
-            f"Market ranking: 정적 종목 풀 폴백 {len(combined[:limit])}개 "
-            f"(DB {len(db_codes)}건 + 정적 풀 보충, FDR/KIND 전종목 API 불가)"
-        )
-        return combined[:limit]
+        return self._get_ranking_static_fallback(market, limit)
 
     def get_value_candidates(
         self,
@@ -626,29 +664,11 @@ class StockDataProvider:
             per_max: PER 상한 (0 이하 = 적자 제외)
             roe_min: ROE 하한 (%)
         """
-        import re
         import concurrent.futures as _cf
         from bs4 import BeautifulSoup
 
         _headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         sosok_list = [0, 1] if market == "ALL" else ([0] if market == "KOSPI" else [1])
-
-        def _last_page(sosok: int) -> int:
-            try:
-                r = requests.get(
-                    "https://finance.naver.com/sise/sise_market_sum.naver",
-                    params={"sosok": str(sosok), "page": "1"},
-                    headers=_headers, timeout=10,
-                )
-                soup = BeautifulSoup(r.text, "html.parser")
-                pager = soup.select(".pgRR a")
-                if pager:
-                    m = re.search(r"page=(\d+)", pager[-1]["href"])
-                    if m:
-                        return int(m.group(1))
-            except Exception:
-                pass
-            return 50
 
         def _fetch_page(sosok: int, page: int):
             try:
@@ -700,7 +720,7 @@ class StockDataProvider:
             # 페이지 수 파악 후 병렬 수집
             tasks = []
             for sosok in sosok_list:
-                n = _last_page(sosok)
+                n = self._naver_last_page(sosok, _headers)
                 tasks += [(sosok, p) for p in range(1, n + 1)]
 
             all_rows: List[dict] = []
@@ -719,7 +739,6 @@ class StockDataProvider:
                 seen.add(code)
                 per = row["per"]
                 roe = row["roe"]
-                import math
                 if per is not None and not math.isnan(per) and (per <= 0 or per > per_max):
                     continue
                 if roe is not None and not math.isnan(roe) and roe < roe_min:

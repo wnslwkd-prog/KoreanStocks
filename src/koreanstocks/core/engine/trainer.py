@@ -478,8 +478,12 @@ def fetch_train_test_samples(
         } if _tcn.is_available() else {}
 
         all_futures = {**tree_futures, **tcn_futures}
+        # per-call timeout은 provider.get_ohlcv 내부에서 25s 강제됨.
+        # 여기서는 전체 수집에 걸리는 시간을 보수적으로 제한 (종목수 × 1.5배 마진).
+        n_futures = len(all_futures)
+        outer_timeout = max(300, n_futures * 3)   # 최소 5분, 최대 종목당 3s 기대
         try:
-            for fut in as_completed(all_futures, timeout=600):
+            for fut in as_completed(all_futures, timeout=outer_timeout):
                 kind, c = all_futures[fut]
                 try:
                     result = fut.result()
@@ -810,7 +814,11 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
         else:
             logger.warning("  [TCN] 학습 실패 또는 건너뜀 — 앙상블에서 제외됩니다.")
     elif not _tcn.is_available():
-        logger.info("  [TCN] PyTorch 미설치 — 건너뜁니다. (pip install torch)")
+        import sys as _sys
+        _in_pipx = "pipx" in _sys.executable or "pipx" in str(getattr(_sys, "prefix", ""))
+        _cmd = "pipx inject koreanstocks torch" if _in_pipx else 'pip install "koreanstocks[dl]"'
+        logger.info(f"  [TCN] PyTorch 미설치 — 건너뜁니다.  활성화: {_cmd}")
+        del _sys, _in_pipx, _cmd
 
     logger.info(f"✅ 모든 모델 저장 완료  →  {MODEL_DIR}")
 

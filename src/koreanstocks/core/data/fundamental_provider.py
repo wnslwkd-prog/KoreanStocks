@@ -259,6 +259,57 @@ class FundamentalProvider:
             "debt_decreased":    (debt_cur is not None and debt_prev is not None and debt_cur < debt_prev),
         }
 
+    @staticmethod
+    def _calc_dart_ratios(use_items: list, amt_fn, yoy_fn) -> Dict:
+        """DART 항목 리스트에서 재무 지표를 계산하여 반환.
+
+        Args:
+            use_items: DART API list (CFS 또는 OFS)
+            amt_fn:    amt(items, keys, field) 헬퍼
+            yoy_fn:    dart_yoy(current, prev) 헬퍼
+        """
+        rev  = amt_fn(use_items, ["매출액", "영업수익"])
+        opi  = amt_fn(use_items, ["영업이익", "영업이익(손실)"])
+        net  = amt_fn(use_items, ["당기순이익(손실)", "당기순이익"])
+        revp = amt_fn(use_items, ["매출액", "영업수익"], "frmtrm_amount")
+        opip = amt_fn(use_items, ["영업이익", "영업이익(손실)"], "frmtrm_amount")
+        netp = amt_fn(use_items, ["당기순이익(손실)", "당기순이익"], "frmtrm_amount")
+        debt  = amt_fn(use_items, ["부채총계"])
+        debtp = amt_fn(use_items, ["부채총계"], "frmtrm_amount")
+        eq    = amt_fn(use_items, ["자본총계"])
+        eqp   = amt_fn(use_items, ["자본총계"], "frmtrm_amount")
+
+        if not any(v is not None for v in [rev, opi, debt, eq, net]):
+            return {}
+
+        result: Dict = {}
+        if rev is not None:
+            result["dart_revenue"]      = rev
+            result["dart_revenue_prev"] = revp
+            result["revenue_yoy"]       = yoy_fn(rev, revp)
+        if opi is not None:
+            result["dart_op_income"]      = opi
+            result["dart_op_income_prev"] = opip
+            result["op_income_yoy"]       = yoy_fn(opi, opip)
+            result["op_income_positive"]  = opi > 0
+        if debt is not None and eq is not None and eq != 0:
+            result["debt_ratio"] = round(debt / eq * 100, 1)
+        if debtp is not None and eqp is not None and eqp != 0:
+            result["debt_ratio_prev"] = round(debtp / eqp * 100, 1)
+        if net is not None and eq is not None and eq != 0:
+            result["roe"] = round(net / eq * 100, 1)
+        if netp is not None and eqp is not None and eqp != 0:
+            result["roe_prev"] = round(netp / eqp * 100, 1)
+        if opi is not None and rev is not None and rev != 0:
+            result["op_margin"] = round(opi / rev * 100, 1)
+        roe_c, roe_p = result.get("roe"), result.get("roe_prev")
+        if roe_c is not None and roe_p is not None:
+            result["roe_improved"] = roe_c > roe_p
+        dr_c, dr_p = result.get("debt_ratio"), result.get("debt_ratio_prev")
+        if dr_c is not None and dr_p is not None:
+            result["debt_decreased"] = dr_c < dr_p
+        return result
+
     def _fetch_dart_financials(self, code: str) -> Dict:
         """DART 단일회사 주요계정 — 매출액·영업이익 당기/전기."""
         from koreanstocks.core.engine.news_agent import news_agent  # corp_code 매핑 재사용
@@ -312,66 +363,9 @@ class FundamentalProvider:
                 ofs_items = [i for i in data["list"] if i.get("fs_div") == "OFS"]
                 use_items = cfs_items if cfs_items else ofs_items
 
-                rev  = amt(use_items, ["매출액", "영업수익"])
-                opi  = amt(use_items, ["영업이익", "영업이익(손실)"])          # 적자 이력 기업 계정명 포함
-                net  = amt(use_items, ["당기순이익(손실)", "당기순이익"])
-                revp = amt(use_items, ["매출액", "영업수익"], "frmtrm_amount")
-                opip = amt(use_items, ["영업이익", "영업이익(손실)"], "frmtrm_amount")
-                netp = amt(use_items, ["당기순이익(손실)", "당기순이익"], "frmtrm_amount")
-                debt  = amt(use_items, ["부채총계"])
-                debtp = amt(use_items, ["부채총계"], "frmtrm_amount")
-                eq    = amt(use_items, ["자본총계"])
-                eqp   = amt(use_items, ["자본총계"], "frmtrm_amount")
-
-                # 재무상태표 & 손익 데이터가 하나라도 있으면 저장
-                has_data = any(v is not None for v in [rev, opi, debt, eq, net])
-                if not has_data:
-                    continue
-
-                # iter_result: 이번 연도 데이터 전용 dict — 예외 발생 시 연도간 혼합 방지
-                # 처리가 완전히 성공한 경우에만 result에 반영한다
-                iter_result: Dict = {}
-
-                if rev is not None:
-                    iter_result["dart_revenue"]      = rev
-                    iter_result["dart_revenue_prev"] = revp
-                    iter_result["revenue_yoy"]       = dart_yoy(rev, revp)
-
-                # op_income_yoy·op_income_positive 는 rev와 무관 — opi 유무만 확인
-                # 매출액 계정이 없는 지주회사 등에서도 영업이익 지표를 정상 추출하기 위함
-                if opi is not None:
-                    iter_result["dart_op_income"]      = opi
-                    iter_result["dart_op_income_prev"] = opip
-                    iter_result["op_income_yoy"]       = dart_yoy(opi, opip)
-                    iter_result["op_income_positive"]  = opi > 0
-
-                # 부채비율 (부채총계 / 자본총계 × 100)
-                if debt is not None and eq is not None and eq != 0:
-                    iter_result["debt_ratio"] = round(debt / eq * 100, 1)
-                # 전년 부채비율
-                if debtp is not None and eqp is not None and eqp != 0:
-                    iter_result["debt_ratio_prev"] = round(debtp / eqp * 100, 1)
-                # ROE = 당기순이익 / 자본총계 × 100
-                if net is not None and eq is not None and eq != 0:
-                    iter_result["roe"] = round(net / eq * 100, 1)
-                if netp is not None and eqp is not None and eqp != 0:
-                    iter_result["roe_prev"] = round(netp / eqp * 100, 1)
-                # 영업이익률 = 영업이익 / 매출액 × 100
-                if opi is not None and rev is not None and rev != 0:
-                    iter_result["op_margin"] = round(opi / rev * 100, 1)
-                # roe_improved / debt_decreased 파생 플래그
-                roe_c, roe_p = iter_result.get("roe"), iter_result.get("roe_prev")
-                if roe_c is not None and roe_p is not None:
-                    iter_result["roe_improved"] = roe_c > roe_p
-                dr_c, dr_p = iter_result.get("debt_ratio"), iter_result.get("debt_ratio_prev")
-                if dr_c is not None and dr_p is not None:
-                    iter_result["debt_decreased"] = dr_c < dr_p
-
-                # has_data가 True여도 계산 가능한 지표가 없으면 (분모 없어 계산 불가 등)
-                # year-2 폴백을 계속 시도
+                iter_result = FundamentalProvider._calc_dart_ratios(use_items, amt, dart_yoy)
                 if not iter_result:
                     continue
-
                 result = iter_result
                 break
 

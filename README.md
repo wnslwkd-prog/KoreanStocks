@@ -1,6 +1,6 @@
 # 📈 Korean Stocks AI/ML Analysis System
 
-![version](https://img.shields.io/badge/version-0.4.5-blue)
+![version](https://img.shields.io/badge/version-0.4.6-blue)
 ![python](https://img.shields.io/badge/python-3.11~3.13-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -719,7 +719,7 @@ KoreanStocks/
 ├── train_models.py                      # ML 모델 재학습 스크립트
 ├── src/
 │   └── koreanstocks/
-│       ├── __init__.py                  # VERSION = "0.4.4"
+│       ├── __init__.py                  # VERSION = "0.4.6"
 │       ├── cli.py                       # Typer CLI (10개 명령어)
 │       ├── api/
 │       │   ├── app.py                   # FastAPI 앱 팩토리
@@ -781,6 +781,15 @@ KoreanStocks/
 ---
 
 ## 📝 변경 이력
+
+### v0.4.6 (2026-03-12) — FDR 타임아웃 패치 · pipx 환경 감지 · 기술 부채 해소
+
+- 🐛 `provider.py`: `requests.Session.send` 전역 패치로 FDR DataReader read timeout 강제 (connect=10s, read=25s) — 학습 수집 hang 및 프로세스 exit hang 해결
+- 🐛 `trainer.py`: 학습 데이터 수집 글로벌 타임아웃을 고정 600s → 동적(`max(300, 종목수×3s)`)으로 개선
+- 🔧 `tcn_model.py` / `trainer.py`: pipx 격리 venv 환경 감지 → TCN(`torch`) 미설치 시 `pipx inject koreanstocks torch` 안내 자동 출력 (기존 `pip install torch` 오안내 수정)
+- 🔧 `recommendation_agent.py`: `SAVEPOINT` 인덱스 assert 추가 — 잘못된 SAVEPOINT 이름 생성 방지
+- 🔧 `provider.py`: `_naver_last_page()` · `_naver_col_indices()` · `_get_ranking_static_fallback()` 헬퍼 메서드 추출 — CC 23→8 감소
+- 🔧 `fundamental_provider.py`: `_calc_dart_ratios()` 스태틱 메서드 추출 — `_fetch_dart_financials()` CC 20→8 감소
 
 ### v0.4.5 (2026-03-12) — PyPI 배포 안전성 강화 · pipx TCN 활성화 안내 · 패키지 구조 개선
 

@@ -295,6 +295,7 @@ class RecommendationAgent:
             cursor = conn.cursor()
             saved_count = 0
             for i, rec in enumerate(recommendations):
+                assert isinstance(i, int) and 0 <= i < len(recommendations), f"잘못된 SAVEPOINT 인덱스: {i}"
                 sp = f'sp_rec_{i}'
                 cursor.execute(f'SAVEPOINT {sp}')
                 try:
