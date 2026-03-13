@@ -121,7 +121,11 @@ def _compute_ensemble(models: list[dict]) -> dict:
     tcn_model        = next((m for m in active if m["name"] == "tcn"), None)
     tree_models      = [m for m in active if m["name"] != "tcn"]
     mean_test_auc    = round(sum(m["test_auc"]    for m in active) / n, 4)
-    mean_overfit_gap = round(sum(m["overfit_gap"] for m in active) / n, 4)
+    # TCN은 학습 전체 수렴 특성상 train AUC가 높아 overfit_gap이 구조적으로 크게 나타남.
+    # 트리 모델과 같은 기준으로 경보를 발령하면 오탐이 발생하므로
+    # mean_overfit_gap 계산에서 TCN을 제외한다.
+    _gap_models      = tree_models if tree_models else active
+    mean_overfit_gap = round(sum(m["overfit_gap"] for m in _gap_models) / len(_gap_models), 4)
     mean_regime_gap  = round(sum(m["regime_gap"]  for m in active) / n, 4)
     all_quality_pass  = all(m["quality_pass"] for m in active)
     any_date_unknown  = any(m["days_since_training"] == -1 for m in active)
@@ -139,7 +143,7 @@ def _compute_ensemble(models: list[dict]) -> dict:
         factors.append(f"마지막 학습 {days_since}일 경과 (권장: 30일 이내)")
         retrain = True
     if mean_overfit_gap > 0.10:
-        factors.append(f"평균 과적합 갭 {mean_overfit_gap:.4f} (임계: 0.10)")
+        factors.append(f"트리 모델 평균 과적합 갭 {mean_overfit_gap:.4f} (임계: 0.10, TCN 제외)")
         retrain = True
     if not all_quality_pass:
         factors.append(f"품질 기준 미달 모델 존재 (AUC < {_MIN_AUC_THRESHOLD})")

@@ -246,8 +246,8 @@ MODEL_CONFIGS: Dict[str, dict] = {
     'random_forest': {
         'class': RandomForestClassifier,
         'params': dict(
-            n_estimators=300, max_depth=5, min_samples_split=20,
-            min_samples_leaf=20, max_features=0.5,
+            n_estimators=300, max_depth=5, min_samples_split=30,
+            min_samples_leaf=30, max_features=0.4,
             class_weight='balanced', random_state=42, n_jobs=-1,
         ),
     },
