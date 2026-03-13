@@ -58,7 +58,7 @@ def build_features(
     market_df: pd.DataFrame = None,
     macro_df: pd.DataFrame = None,
 ) -> pd.DataFrame:
-    """지표(indicator) DataFrame → BASE_FEATURE_COLS 20개 추출.
+    """지표(indicator) DataFrame → BASE_FEATURE_COLS 28개 추출.
 
     학습(trainer.py)과 추론(prediction_model.py)에서 동일 로직을 사용해
     train/serve 피처 불일치(feature skew)를 방지한다.

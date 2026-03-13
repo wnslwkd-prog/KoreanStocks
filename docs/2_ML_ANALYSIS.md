@@ -449,7 +449,7 @@ koreanstocks train --future-days 10 --period 2y --test-ratio 0.2
 
 - 재학습 후 `models/saved/model_params/*.json`의 AUC 수치 확인 권장
 - 품질 게이트 미달(`test_auc < 0.52`) 시 모델 저장은 되지만 추론 시 자동 제외
-- ML 피처 목록 변경 시 `trainer.py`의 `BASE_FEATURE_COLS`와 `prediction_model.py`의 `_FEATURE_COLS`를 반드시 동기화 필요
+- ML 피처 목록 변경 시 `features.py`의 `BASE_FEATURE_COLS`만 수정하면 됨 — `trainer.py`·`prediction_model.py` 양쪽이 이 목록을 import해 자동 동기화됨
 
 ---
 
