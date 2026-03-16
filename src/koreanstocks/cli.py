@@ -93,11 +93,14 @@ def main(
     [bold]분석 파이프라인:[/bold]
 
       [cyan]1단계[/cyan]  기술적 지표  →  tech_score  [dim](RSI·MACD·BB·ADX·CMF 등, 0~100)[/dim]
-      [cyan]2단계[/cyan]  ML 앙상블    →  ml_score    [dim](RF+GB+XGB, 10거래일 후 상위 25% 확률, 0~100)[/dim]
+      [cyan]2단계[/cyan]  ML 앙상블    →  ml_score    [dim](RF·GB·LGB·CB·XGBRanker·TCN 6-모델, 0~100)[/dim]
       [cyan]3단계[/cyan]  뉴스 감성    →  sentiment   [dim](Naver 뉴스 + GPT-4o-mini, -100~+100)[/dim]
+      [cyan]3.5단계[/cyan] 거시경제    →  macro       [dim](Naver 뉴스 거시 감성 + 레짐 감지, risk_on/uncertain/risk_off)[/dim]
       [cyan]4단계[/cyan]  AI 종합      →  BUY/HOLD/SELL + 목표가
 
-    [dim]  종합점수 = tech×0.40 + ml×0.35 + sentiment_norm×0.25[/dim]
+    [dim]  종합점수 (ML + 거시) = tech×0.35 + ml×0.35 + 종목감성×0.20 + 거시감성×0.10[/dim]
+    [dim]  종합점수 (ML)        = tech×0.40 + ml×0.35 + 종목감성×0.25[/dim]
+    [dim]  종합점수 (ML 없음)   = tech×0.65 + 종목감성×0.35[/dim]
 
     ────────────────────────────────────────────────
 
@@ -108,6 +111,8 @@ def main(
     [green]  koreanstocks serve[/green]           [dim]# 웹 대시보드 실행 (브라우저 자동 열림)[/dim]
     [green]  koreanstocks recommend[/green]       [dim]# 오늘의 추천 종목 분석 + 텔레그램 발송[/dim]
     [green]  koreanstocks analyze 005930[/green]  [dim]# 삼성전자 단일 심층 분석[/dim]
+    [green]  koreanstocks value[/green]           [dim]# 가치주 스크리닝 (PER·PBR·ROE·F-Score)[/dim]
+    [green]  koreanstocks quality[/green]         [dim]# 우량주 스크리닝 (ROE·영업이익률·성장성)[/dim]
     [green]  koreanstocks train[/green]           [dim]# ML 모델 재학습[/dim]
     [green]  koreanstocks outcomes[/green]        [dim]# 추천 결과 성과 추적 (5·10·20거래일)[/dim]
 
@@ -158,7 +163,7 @@ def serve(
 
     [bold]제공 URL:[/bold]
     [green]  /[/green]          일일 브리핑 슬라이드 (Reveal.js)
-    [green]  /dashboard[/green] 인터랙티브 대시보드 (6탭)
+    [green]  /dashboard[/green] 인터랙티브 대시보드 (8탭)
     [green]  /docs[/green]      API 문서 (Swagger UI)
 
     [bold]예시:[/bold]
@@ -262,11 +267,11 @@ def train(
     test_ratio: float = typer.Option(0.2, help="검증 세트 비율 (0~1)"),
 ):
     """
-    [bold]ML 모델 재학습[/bold] — RandomForest·GradientBoosting·XGBoost 앙상블
+    [bold]ML 모델 재학습[/bold] — RF·GB·LGB·CB·XGBRanker·TCN 6-모델 앙상블
 
-    [bold]사용 피처 (18개):[/bold]
-    [dim]  기술지표 15개 — ATR, ADX, BB, MACD, CMF, VZO, Fisher, vol_ratio 등[/dim]
-    [dim]  시장·거시 3개  — 시장 상대강도 3m, VIX 레벨/변화율, S&P500 1m[/dim]
+    [bold]사용 피처 (28개):[/bold]
+    [dim]  기술지표 18개 — RSI, MACD, BB, ADX, CMF, VZO, Fisher, OBV, MFI, Fractal 등[/dim]
+    [dim]  거시경제 10개 — VIX(레벨·변화), S&P500, NASDAQ, TNX(레벨·변화), 장단기스프레드, 금, 원유, CSI300[/dim]
 
     [bold]타깃:[/bold] 10거래일 후 수익률 상위 25%/하위 25% 이진 분류 (중간 50% neutral zone 제외)
 

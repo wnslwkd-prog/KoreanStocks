@@ -1,6 +1,6 @@
 # 📈 Korean Stocks AI/ML Analysis System
 
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-0.5.2-blue)
 ![python](https://img.shields.io/badge/python-3.11~3.13-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -578,7 +578,7 @@ koreanstocks analyze 005930
 
 # ML 모델 재학습
 koreanstocks train
-koreanstocks train --period 3 --future-days 10
+koreanstocks train --period 2y --future-days 10
 
 # DB 동기화 (PyPI 설치 환경)
 koreanstocks sync              # 최초 수신 또는 날짜 갱신
@@ -634,6 +634,10 @@ python tests/compat_check.py          # Python 3.11-3.13 호환성 검증
 | **quality** | `/api/quality_stocks` | GET | 우량주 스크리닝 결과 |
 | | `/api/quality_stocks/filters` | GET | 필터 기본값 |
 | **models** | `/api/model_health` | GET | ML 모델 헬스체크 |
+| | `/api/model_params/{name}` | GET | 학습 파라미터 + 오버라이드 조회 |
+| | `/api/model_params/{name}` | POST | 파라미터 오버라이드 저장 |
+| | `/api/model_params/{name}/override` | DELETE | 오버라이드 초기화 |
+| | `/api/macro_context` | GET | 거시경제 레짐·감성·요약 |
 | **version** | `/api/version` | GET | API 버전 정보 |
 
 ---
@@ -687,7 +691,7 @@ KoreanStocks/
 ├── train_models.py                      # ML 모델 재학습 스크립트
 ├── src/
 │   └── koreanstocks/
-│       ├── __init__.py                  # VERSION = "0.5.0"
+│       ├── __init__.py                  # VERSION = "0.5.2"
 │       ├── cli.py                       # Typer CLI (10개 명령어)
 │       ├── api/
 │       │   ├── app.py                   # FastAPI 앱 팩토리
@@ -749,6 +753,26 @@ KoreanStocks/
 ---
 
 ## 📝 변경 이력
+
+### v0.5.2 (2026-03-16) — 기술 부채 해소 · 상수 중앙화 · trainer 분해 · 단위 테스트 추가
+
+- 🔧 `constants.py`: 레짐 임계값·앙상블 가중치·Softmax 온도·max_workers 상수 추출 (매직넘버 중앙화)
+- 🔧 `provider.py`: `fetch_macro_df()` / `fetch_market_df()` 공유 함수 추출 + `_HEADERS` 모듈 상수화
+- 🔧 `trainer.py`: `train_and_save()` 255줄 → 3개 헬퍼 함수 + ~80줄 오케스트레이터로 분해
+- 🔧 `quality_screener.py`: O(n²) 종목 룩업 → `set_index` O(1) + `calc_roe_avg()` 공유 함수 추출
+- 🔧 `value.py` / `quality.py` 라우터: `Depends()` 패턴 통일 (테스트 인젝션 가능)
+- 🐛 `backtester.py`: Sharpe 계산 시 NaN sync-back 제거 — 표준편차 왜곡 버그 수정
+- 🐛 `features.py` / `prediction_model.py`: `market_df`·`macro_df` 중복 인덱스 방어 코드 추가
+- 🐛 `sync` CLI URL 오타 수정 (`KoreanStock` → `KoreanStocks`)
+- ✨ `tests/test_core.py` 신규: 단위 테스트 29개 추가
+
+### v0.5.1 (2026-03-16) — 모델 파라미터 UI · 신뢰도 권장 파라미터 정확화
+
+- ✨ `models.py` / `dashboard.js`: 모델 파라미터 조회·조정 UI — 학습 파라미터 토글, 오버라이드 저장 (`*_overrides.json`), 재학습 시 자동 병합
+- ✨ `GET/POST/DELETE /api/model_params/{name}` 엔드포인트 — 파라미터 오버라이드 CRUD, 서버 측 범위 검증
+- 🔧 `신뢰도 향상 방안` 카드 — 모델별 실제 파라미터명으로 조치 텍스트 정확화 (XGBoost: `min_child_weight`, LightGBM: `min_child_samples`, CatBoost: `min_data_in_leaf`)
+- 🐛 `dashboard.js`: `innerHTML +=` 반복 시 DOM 재직렬화 버그 → `createElement` + `addEventListener` 방식으로 교체
+- 🐛 `trainer.py`: 학습 루프에 `*_overrides.json` 자동 merge 로직 추가
 
 ### v0.5.0 (2026-03-13) — 거시경제 통합 · MacroNewsAgent · 대시보드 거시 UI · ML 28피처
 

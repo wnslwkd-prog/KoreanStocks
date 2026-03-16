@@ -1,7 +1,7 @@
 # ML 분석 시스템 기술 문서
 
-> Korean Stocks AI/ML Analysis System `v0.5.0`
-> 최종 업데이트: 2026-03-13
+> Korean Stocks AI/ML Analysis System `v0.5.2`
+> 최종 업데이트: 2026-03-16
 
 ---
 
@@ -450,6 +450,61 @@ koreanstocks train --future-days 10 --period 2y --test-ratio 0.2
 - 재학습 후 `models/saved/model_params/*.json`의 AUC 수치 확인 권장
 - 품질 게이트 미달(`test_auc < 0.52`) 시 모델 저장은 되지만 추론 시 자동 제외
 - ML 피처 목록 변경 시 `features.py`의 `BASE_FEATURE_COLS`만 수정하면 됨 — `trainer.py`·`prediction_model.py` 양쪽이 이 목록을 import해 자동 동기화됨
+
+### 파라미터 오버라이드 워크플로우
+
+재학습 전에 파라미터를 미리 조정하고 저장해두면, 다음 `koreanstocks train` 실행 시 자동으로 병합된다.
+
+#### 방법 1 — 대시보드 UI (권장)
+
+1. `koreanstocks serve` 실행 → **모델 신뢰도** 탭 이동
+2. 조정할 모델 카드의 **[파라미터 조정 ▼]** 토글 클릭
+3. 슬라이더로 값 조정 후 **[오버라이드 저장]** 클릭
+4. `koreanstocks train` 실행 — 오버라이드가 자동 적용되고 로그에 `[override] {name} 파라미터 오버라이드 적용` 출력
+
+#### 방법 2 — JSON 직접 편집
+
+```bash
+# 예: CatBoost depth 3→2, min_data_in_leaf 40→60
+cat > models/saved/model_params/catboost_overrides.json << 'EOF'
+{"depth": 2, "min_data_in_leaf": 60}
+EOF
+
+koreanstocks train
+```
+
+#### 조정 가능 파라미터 목록
+
+| 모델 | 파라미터 | 범위 | 과적합 완화 방향 |
+|------|---------|------|----------------|
+| CatBoost | `depth` | 2 ~ 6 | ↓ 낮출수록 정규화 |
+| | `l2_leaf_reg` | 1.0 ~ 20.0 | ↑ 높일수록 정규화 |
+| | `min_data_in_leaf` | 20 ~ 100 | ↑ 높일수록 정규화 |
+| LightGBM | `max_depth` | 1 ~ 4 | ↓ 낮출수록 정규화 |
+| | `min_child_samples` | 50 ~ 200 | ↑ 높일수록 정규화 |
+| | `reg_lambda` | 1.0 ~ 15.0 | ↑ 높일수록 정규화 |
+| XGBoost Ranker | `max_depth` | 2 ~ 5 | ↓ 낮출수록 정규화 |
+| | `min_child_weight` | 15 ~ 60 | ↑ 높일수록 정규화 |
+| | `reg_lambda` | 1.0 ~ 10.0 | ↑ 높일수록 정규화 |
+| Random Forest | `max_depth` | 3 ~ 8 | ↓ 낮출수록 정규화 |
+| | `min_samples_leaf` | 15 ~ 60 | ↑ 높일수록 정규화 |
+| Gradient Boosting | `max_depth` | 1 ~ 4 | ↓ 낮출수록 정규화 |
+| | `min_samples_leaf` | 15 ~ 60 | ↑ 높일수록 정규화 |
+
+> **TCN 파라미터**는 아키텍처 구조에 직결되어 재컴파일 없이 조정 불가 — 오버라이드 미지원.
+
+#### 오버라이드 파일 위치
+
+```
+models/saved/model_params/
+├── catboost_params.json          ← 최근 학습 결과 (읽기 전용)
+├── catboost_overrides.json       ← 오버라이드 (UI/수동 작성, 없으면 무시)
+├── lightgbm_params.json
+├── lightgbm_overrides.json
+└── ...
+```
+
+오버라이드 초기화는 대시보드 UI의 **[오버라이드 초기화]** 버튼 또는 파일 직접 삭제로 수행.
 
 ---
 

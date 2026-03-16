@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Body
 
 from koreanstocks.core.config import config
 from koreanstocks.core.constants import MIN_MODEL_AUC
@@ -25,6 +25,36 @@ _MODEL_CONFIGS = [
 ]
 
 _MIN_AUC_THRESHOLD = MIN_MODEL_AUC  # core/constants.py 단일 소스
+
+# ── 편집 가능 파라미터 명세 (UI 렌더링 + 서버 측 검증 범위 동시 사용) ──
+_EDITABLE_PARAMS: dict[str, list[dict]] = {
+    "catboost": [
+        {"key": "depth",            "type": "int",   "min": 2,   "max": 6,    "step": 1},
+        {"key": "l2_leaf_reg",      "type": "float", "min": 1.0, "max": 20.0, "step": 0.5},
+        {"key": "min_data_in_leaf", "type": "int",   "min": 20,  "max": 100,  "step": 5},
+    ],
+    "random_forest": [
+        {"key": "max_depth",        "type": "int",   "min": 3,   "max": 7,    "step": 1},
+        {"key": "min_samples_leaf", "type": "int",   "min": 20,  "max": 80,   "step": 5},
+        {"key": "max_features",     "type": "float", "min": 0.2, "max": 0.8,  "step": 0.05},
+    ],
+    "gradient_boosting": [
+        {"key": "max_depth",        "type": "int",   "min": 1,   "max": 4,    "step": 1},
+        {"key": "min_samples_leaf", "type": "int",   "min": 15,  "max": 60,   "step": 5},
+        {"key": "subsample",        "type": "float", "min": 0.5, "max": 1.0,  "step": 0.05},
+    ],
+    "lightgbm": [
+        {"key": "max_depth",         "type": "int",   "min": 1,   "max": 4,    "step": 1},
+        {"key": "min_child_samples", "type": "int",   "min": 50,  "max": 200,  "step": 10},
+        {"key": "reg_lambda",        "type": "float", "min": 1.0, "max": 15.0, "step": 0.5},
+    ],
+    "xgboost_ranker": [
+        {"key": "max_depth",        "type": "int",   "min": 2,   "max": 5,    "step": 1},
+        {"key": "min_child_weight", "type": "int",   "min": 15,  "max": 60,   "step": 5},
+        {"key": "reg_lambda",       "type": "float", "min": 1.0, "max": 10.0, "step": 0.5},
+    ],
+    "tcn": [],  # 조정 불가 (딥러닝 아키텍처 직접 수정 필요)
+}
 
 
 def _days_since(saved_at: str) -> int:
@@ -93,6 +123,8 @@ def _load_model_info(name: str, label: str, filename: str) -> dict | None:
         "days_since_training": _days_since(saved_at),
         "training_duration":  p.get("training_duration", 0.0),
         "feature_importances": p.get("feature_importances", []),
+        "parameters":          p.get("parameters", {}),
+        "has_override":        (PARAMS_DIR / f"{name}_overrides.json").exists(),
     }
 
 
@@ -201,3 +233,104 @@ def get_model_health():
             "without_ml":    "tech×0.65 + 종목감성×0.35",
         },
     }
+
+
+# ── 파라미터 오버라이드 CRUD ─────────────────────────────────────────────
+
+@router.get("/model_params/{model_name}")
+def get_model_params(model_name: str):
+    """학습된 파라미터 + 오버라이드 + 편집 가능 키 반환."""
+    cfg = next((c for c in _MODEL_CONFIGS if c[0] == model_name), None)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"모델 없음: {model_name}")
+    name, label, filename = cfg
+
+    params_path = PARAMS_DIR / filename
+    if not params_path.exists():
+        raise HTTPException(status_code=404, detail="params.json 없음 — 먼저 학습을 실행하세요")
+    try:
+        with open(params_path, encoding="utf-8") as f:
+            p = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"params 로드 실패: {e}")
+
+    override_path = PARAMS_DIR / f"{name}_overrides.json"
+    override = None
+    if override_path.exists():
+        try:
+            with open(override_path, encoding="utf-8") as f:
+                override = json.load(f)
+        except Exception:
+            override = None
+
+    editable = _EDITABLE_PARAMS.get(name, [])
+    return {
+        "name":         name,
+        "label":        label,
+        "parameters":   p.get("parameters", {}),
+        "override":     override,
+        "has_override": override is not None,
+        "editable_keys": editable,
+        "adjustable":   bool(editable),
+    }
+
+
+@router.post("/model_params/{model_name}")
+def save_model_params_override(
+    model_name: str,
+    body: dict = Body(...),
+):
+    """파라미터 오버라이드를 PARAMS_DIR/{name}_overrides.json 에 저장."""
+    cfg = next((c for c in _MODEL_CONFIGS if c[0] == model_name), None)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"모델 없음: {model_name}")
+
+    editable = _EDITABLE_PARAMS.get(model_name, [])
+    if not editable:
+        raise HTTPException(status_code=400, detail="이 모델은 파라미터 조정을 지원하지 않습니다 (TCN)")
+
+    # 범위 검증 — 선언된 범위 밖의 값은 거부
+    errors: list[str] = []
+    validated: dict = {}
+    for spec in editable:
+        key = spec["key"]
+        if key not in body:
+            continue
+        val = body[key]
+        try:
+            val = int(val) if spec["type"] == "int" else float(val)
+        except (TypeError, ValueError):
+            errors.append(f"{key}: 숫자가 아님")
+            continue
+        if not (spec["min"] <= val <= spec["max"]):
+            errors.append(f"{key}={val} 범위 초과 ({spec['min']}~{spec['max']})")
+            continue
+        validated[key] = val
+
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    override_path = PARAMS_DIR / f"{model_name}_overrides.json"
+    try:
+        with open(override_path, "w", encoding="utf-8") as f:
+            json.dump(validated, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"저장 실패: {e}")
+
+    logger.info(f"[model_params] override 저장: {model_name} → {validated}")
+    return {"status": "saved", "override": validated}
+
+
+@router.delete("/model_params/{model_name}/override")
+def delete_model_params_override(model_name: str):
+    """오버라이드 파일 삭제 — 기본값 복원."""
+    cfg = next((c for c in _MODEL_CONFIGS if c[0] == model_name), None)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"모델 없음: {model_name}")
+
+    override_path = PARAMS_DIR / f"{model_name}_overrides.json"
+    if not override_path.exists():
+        raise HTTPException(status_code=404, detail="오버라이드 파일 없음")
+    override_path.unlink()
+    logger.info(f"[model_params] override 삭제: {model_name}")
+    return {"status": "deleted"}

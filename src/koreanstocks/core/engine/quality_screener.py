@@ -25,8 +25,9 @@ import logging
 from datetime import date as _date
 from typing import Dict, List, Optional, Tuple
 
-from koreanstocks.core.data.fundamental_provider import fundamental_provider
+from koreanstocks.core.data.fundamental_provider import fundamental_provider, calc_roe_avg
 from koreanstocks.core.data.provider import data_provider
+from koreanstocks.core.constants import MAX_SCREEN_WORKERS
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +68,14 @@ def quality_score(f: Dict) -> float:
 
     yoy = f.get("op_income_yoy")
     if yoy is not None:
-        # Fix 4: 만점 기준 20% → 30% (변별력 강화)
+        # 만점 기준 30% (변별력 강화)
         parts.append((min(20.0, max(0.0, yoy / 30 * 20)), 20.0))
 
     debt = f.get("debt_ratio")
     if debt is not None:
         parts.append((max(0.0, 15 * (1 - min(debt, 100) / 100)), 15.0))
 
-    # Fix 3: 배당 None → 0pt 처리 (무배당 vs 데이터 없음 혼동 제거, 전 종목 동일 기준)
+    # 배당 None → 0pt (무배당 vs 데이터 없음 혼동 제거, 전 종목 동일 기준)
     div = f.get("dividend_yield") or 0.0
     parts.append((min(10.0, max(0.0, div / 3 * 10)), 10.0))
 
@@ -165,23 +166,22 @@ class QualityScreener:
         logger.info(f"[QUALITY] 후보 {len(candidates)}종목 펀더멘털 수집 중...")
 
         # 2. 펀더멘털 병렬 수집
-        fund_map = fundamental_provider.get_fundamentals_batch(candidates, max_workers=15)
+        fund_map = fundamental_provider.get_fundamentals_batch(candidates, max_workers=MAX_SCREEN_WORKERS)
 
         # 3. 필터 + 점수 산출
         passed: List[Dict] = []
         skipped_no_data = 0
         skipped_filter  = 0
 
+        # O(1) 종목 메타 조회를 위해 인덱스 구축
+        stock_index = stock_list.set_index("code")
+
         for code in candidates:
             f = fund_map.get(code, {})
 
-            # Fix 5: ROE 2개년 평균 사용 (지속성 반영) — prev가 없으면 단일 연도
-            roe_cur  = f.get("roe")
-            roe_prev = f.get("roe_prev")
-            if roe_cur is not None and roe_prev is not None:
-                roe = round((roe_cur + roe_prev) / 2, 1)
-            else:
-                roe = roe_cur
+            # ROE 2개년 평균 (지속성 반영)
+            roe_cur = f.get("roe")
+            roe     = calc_roe_avg(f)
 
             op_margin = f.get("op_margin")
             yoy       = f.get("op_income_yoy")
@@ -200,7 +200,7 @@ class QualityScreener:
             if not op_pos:
                 fail = True
 
-            # Fix 2: op_margin=None이면 핵심 기준 미확인 → 탈락
+            # op_margin=None이면 핵심 기준 미확인 → 탈락
             if not fail and (op_margin is None or op_margin < op_margin_min):
                 fail = True
 
@@ -221,13 +221,16 @@ class QualityScreener:
                 skipped_filter += 1
                 continue
 
-            # 종목 메타
-            row  = stock_list[stock_list["code"] == code]
-            name = row.iloc[0]["name"]             if not row.empty else code
-            mkt  = row.iloc[0].get("market", "")  if not row.empty else ""
-            sect = row.iloc[0].get("sector", "")  if not row.empty else ""
+            # 종목 메타 (O(1) 조회)
+            if code in stock_index.index:
+                row  = stock_index.loc[code]
+                name = row["name"]
+                mkt  = row.get("market", "")
+                sect = row.get("sector", "")
+            else:
+                name, mkt, sect = code, "", ""
 
-            # Fix 5: 평균 ROE를 점수 계산에 반영
+            # 평균 ROE를 점수 계산에 반영
             f_for_score = {**f, "roe": roe}
             qscore = quality_score(f_for_score)
 

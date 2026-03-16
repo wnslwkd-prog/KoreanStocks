@@ -48,10 +48,10 @@ class Backtester:
         # 누적 수익률 및 자본금 계산
         strategy_returns = results['strategy_returns'].fillna(0)
         # 초기 포지션 진입 비용: strategy_returns[0]은 shift로 NaN → fillna 후 별도 차감
-        # results['strategy_returns']에도 동기화하여 win_rate·Sharpe 계산과 일관성 유지
+        # results['strategy_returns']는 NaN 그대로 유지 — Sharpe·win_rate는 NaN을 제외하고 계산
+        # (fee 단독 spike가 std를 왜곡하는 문제 방지)
         if results['trade'].iat[0] > 0:
             strategy_returns.iat[0] -= (self.fee + self.tax)
-            results['strategy_returns'].iat[0] = strategy_returns.iat[0]
         results['cum_returns'] = (1 + strategy_returns).cumprod()
         results['cum_capital'] = results['cum_returns'] * capital
 

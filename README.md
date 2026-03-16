@@ -1,6 +1,6 @@
 # 📈 Korean Stocks AI/ML Analysis System
 
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-0.5.2-blue)
 ![python](https://img.shields.io/badge/python-3.11~3.13-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -409,7 +409,7 @@ flowchart LR
     DASH --> T4["④ 가치주 추천<br/>PER·PBR·ROE·부채비율·F-Score 필터<br/>value_score 복합 정렬<br/>탐색 범위 100/200/300종목"]
     DASH --> T5["⑤ 우량주 추천<br/>ROE·영업이익률·YoY·부채비율 필터<br/>quality_score 정렬<br/>ROE 2개년 지속성 확인"]
     DASH --> T6["⑥ 백테스트<br/>RSI / MACD / COMPOSITE<br/>단순보유 비교 차트<br/>초보자 해석 가이드"]
-    DASH --> T7["⑦ 모델 신뢰도<br/>5모델 AUC · 과적합 갭<br/>드리프트 등급 · 피처 중요도<br/>재학습 권장 여부"]
+    DASH --> T7["⑦ 모델 신뢰도<br/>6모델 AUC · 과적합 갭<br/>드리프트 등급 · 피처 중요도<br/>재학습 권장 여부<br/>🔧 파라미터 슬라이더 조정 · 오버라이드 저장"]
     DASH --> T8["⑧ 설정<br/>수동 일일 업데이트 실행<br/>텔레그램·데이터소스 상태 확인"]
 ```
 
@@ -421,8 +421,37 @@ flowchart LR
 | **가치주 추천** | F-Score + value_score 스크리닝 | 중기 3~6개월 |
 | **우량주 추천** | quality_score 스크리닝 | 장기 6개월+ |
 | **백테스트** | 전략별 과거 성과 시뮬레이션 | 전략 검증 |
-| **모델 신뢰도** | ML 모델 헬스체크 | 신호 신뢰성 판단 |
+| **모델 신뢰도** | ML 모델 헬스체크 · 파라미터 조정 | 신호 신뢰성 판단 · 과적합 완화 |
 | **설정** | 수동 실행, 환경 설정 확인 | 운영 관리 |
+
+### 🔧 모델 파라미터 조정 (모델 신뢰도 탭)
+
+과적합 갭이 크거나 CV 성능이 불안정한 모델에 대해 **재학습 없이 파라미터를 미리 조정**하고 저장할 수 있다.
+
+```
+① 모델 카드 하단 [파라미터 조정 ▼] 클릭
+   → 현재 학습에 사용된 파라미터값 표시 (models/saved/model_params/*.json 기준)
+   → 오버라이드 적용 중이면 🔧 오버라이드 적용 중 배지 표시
+
+② 슬라이더 / 입력란으로 값 조정
+   조정 가능 파라미터 (모델별):
+   ┌─────────────────┬────────────────────────────────────────────────────┐
+   │ CatBoost        │ depth (2~6), l2_leaf_reg (1~20), min_data_in_leaf (20~100) │
+   │ LightGBM        │ max_depth (1~4), min_child_samples (50~200), reg_lambda (1~15) │
+   │ XGBoost Ranker  │ max_depth (2~5), min_child_weight (15~60), reg_lambda (1~10) │
+   │ Random Forest   │ max_depth (3~8), min_samples_leaf (15~60)                │
+   │ Gradient Boost  │ max_depth (1~4), min_samples_leaf (15~60)                │
+   └─────────────────┴────────────────────────────────────────────────────┘
+
+③ [오버라이드 저장] 클릭
+   → models/saved/model_params/{name}_overrides.json 에 저장
+   → 다음 `koreanstocks train` 실행 시 학습 파라미터에 자동 병합
+
+④ [오버라이드 초기화] 클릭
+   → 오버라이드 파일 삭제, 원래 파라미터 복원
+```
+
+> **과적합 갭 완화 예시**: CatBoost val-train AUC 갭이 0.10 이상이면 `depth 3→2`, `min_data_in_leaf 40→60`으로 조정 후 재학습.
 
 ---
 
@@ -617,7 +646,7 @@ koreanstocks analyze 005930
 
 # ML 모델 재학습
 koreanstocks train
-koreanstocks train --period 3 --future-days 10
+koreanstocks train --period 2y --future-days 10
 
 # DB 동기화 (PyPI 설치 환경)
 koreanstocks sync              # 최초 수신 또는 날짜 갱신
@@ -673,6 +702,10 @@ python tests/compat_check.py          # Python 3.11~3.13 호환성 검증
 | **quality** | `/api/quality_stocks` | GET | 우량주 스크리닝 결과 |
 | | `/api/quality_stocks/filters` | GET | 필터 기본값 |
 | **models** | `/api/model_health` | GET | ML 모델 헬스체크 |
+| | `/api/model_params/{name}` | GET | 학습 파라미터 + 오버라이드 조회 |
+| | `/api/model_params/{name}` | POST | 파라미터 오버라이드 저장 |
+| | `/api/model_params/{name}/override` | DELETE | 오버라이드 초기화 |
+| | `/api/macro_context` | GET | 거시경제 레짐·감성·요약 |
 | **version** | `/api/version` | GET | API 버전 정보 |
 
 ---
@@ -724,7 +757,7 @@ KoreanStocks/
 ├── train_models.py                      # ML 모델 재학습 스크립트
 ├── src/
 │   └── koreanstocks/
-│       ├── __init__.py                  # VERSION = "0.5.0"
+│       ├── __init__.py                  # VERSION = "0.5.2"
 │       ├── cli.py                       # Typer CLI (10개 명령어)
 │       ├── api/
 │       │   ├── app.py                   # FastAPI 앱 팩토리
@@ -786,6 +819,26 @@ KoreanStocks/
 ---
 
 ## 📝 변경 이력
+
+### v0.5.2 (2026-03-16) — 기술 부채 해소 · 상수 중앙화 · trainer 분해 · 단위 테스트 추가
+
+- 🔧 `constants.py`: 레짐 임계값·앙상블 가중치·Softmax 온도·max_workers 상수 추출 (매직넘버 중앙화)
+- 🔧 `provider.py`: `fetch_macro_df()` / `fetch_market_df()` 공유 함수 추출 + `_HEADERS` 모듈 상수화
+- 🔧 `trainer.py`: `train_and_save()` 255줄 → 3개 헬퍼 함수 + ~80줄 오케스트레이터로 분해
+- 🔧 `quality_screener.py`: O(n²) 종목 룩업 → `set_index` O(1) + `calc_roe_avg()` 공유 함수 추출
+- 🔧 `value.py` / `quality.py` 라우터: `Depends()` 패턴 통일 (테스트 인젝션 가능)
+- 🐛 `backtester.py`: Sharpe 계산 시 NaN sync-back 제거 — 표준편차 왜곡 버그 수정
+- 🐛 `features.py` / `prediction_model.py`: `market_df`·`macro_df` 중복 인덱스 방어 코드 추가
+- 🐛 `sync` CLI URL 오타 수정 (`KoreanStock` → `KoreanStocks`)
+- ✨ `tests/test_core.py` 신규: 단위 테스트 29개 추가 (calc_composite_score, build_features, calc_roe_avg 등)
+
+### v0.5.1 (2026-03-16) — 모델 파라미터 UI · 신뢰도 권장 파라미터 정확화
+
+- ✨ `models.py` / `dashboard.js`: 모델 파라미터 조회·조정 UI — 학습 파라미터 토글, 오버라이드 저장 (`*_overrides.json`), 재학습 시 자동 병합
+- ✨ `GET/POST/DELETE /api/model_params/{name}` 엔드포인트 — 파라미터 오버라이드 CRUD, 서버 측 범위 검증
+- 🔧 `신뢰도 향상 방안` 카드 — 모델별 실제 파라미터명으로 조치 텍스트 정확화 (XGBoost: `min_child_weight`, LightGBM: `min_child_samples`, CatBoost: `min_data_in_leaf`)
+- 🐛 `dashboard.js`: `innerHTML +=` 반복 시 DOM 재직렬화·`&&` 이중 인코딩 버그 → `createElement` + `addEventListener` 방식으로 교체
+- 🐛 `trainer.py`: 학습 루프에 `*_overrides.json` 자동 merge 로직 추가
 
 ### v0.5.0 (2026-03-13) — 거시경제 통합 · MacroNewsAgent · 대시보드 거시 UI · ML 28피처
 

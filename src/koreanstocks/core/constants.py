@@ -25,6 +25,27 @@ BUCKET_RATIOS: List[Tuple[str, float]] = [
     ('rebound',  0.25),
 ]
 
+# ── ML 앙상블 가중치 및 하이퍼파라미터 (단일 소스) ─────────────────────────────
+# 분류기(RF·GB·LGB·CB·TCN) : 랭커(XGBRanker) 블렌딩 비율
+ENSEMBLE_CLF_WEIGHT: float = 0.75
+ENSEMBLE_RNK_WEIGHT: float = 0.25
+
+# Softmax 온도 (AUC 기반 모델 가중치 정규화 시 사용)
+# 값이 클수록 높은 AUC 모델에 가중치가 집중됨
+SOFTMAX_TEMPERATURE: float = 5.0
+
+# ── 레짐별 composite_score 최소 임계값 (recommendation_agent 단일 소스) ────────
+# risk_off일수록 문턱을 높여 보수적 추천
+REGIME_SCORE_THRESHOLD: Dict[str, float] = {
+    "risk_on":   45.0,
+    "uncertain": 50.0,
+    "risk_off":  57.0,
+}
+
+# ── 병렬 처리 Worker 수 (단일 소스) ──────────────────────────────────────────
+MAX_ANALYSIS_WORKERS: int = 10   # recommendation_agent 종목 병렬 분석
+MAX_SCREEN_WORKERS:   int = 15   # value/quality_screener 펀더멘털 배치 수집
+
 # ── 종합 점수 가중치 (단일 소스) ─────────────────────────────────────────────
 # 변경 시 모델 재학습 여부 검토 필요 (CLAUDE.md "자동 수정 금지 대상" 참조)
 # Phase 2: 거시감성 포함 가중치 추가 (macro_sentiment_score 제공 시 적용)

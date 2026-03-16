@@ -13,7 +13,7 @@ import logging
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeout
 
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -26,7 +26,7 @@ from catboost import CatBoostClassifier
 
 from koreanstocks.core.config import config
 from koreanstocks.core.constants import MIN_MODEL_AUC
-from koreanstocks.core.data.provider import data_provider
+from koreanstocks.core.data.provider import data_provider, fetch_macro_df, fetch_market_df
 from koreanstocks.core.engine.indicators import indicators
 from koreanstocks.core.engine.features import build_features, BASE_FEATURE_COLS
 from koreanstocks.core.engine import tcn_model as _tcn
@@ -297,99 +297,15 @@ MIN_STOCKS_PER_DATE = 5
 
 # ───────────────────────────── 데이터 수집 ─────────────────────────────
 
-_MACRO_TRAIN_SYMBOLS = ['^VIX', '^GSPC', '^IXIC', '^TNX', '^IRX', 'GC=F', 'CL=F', '000300.SS']
-
-
+# provider.py 의 단일 소스 구현으로 위임 (심볼 상수도 provider.MACRO_SYMBOLS 참조)
 def _fetch_macro_data(period: str) -> pd.DataFrame:
-    """yfinance로 거시경제 데이터 수집 (학습 전 1회 호출).
-
-    Returns: DataFrame(10개 거시 피처), 인덱스=날짜(tz-naive)
-      vix_level, vix_change_5d,          — VIX 레벨·변화율
-      sp500_1m, nasdaq_1m,               — 미국 증시
-      tnx_level, tnx_change_1m,          — 미국채 10Y 금리
-      yield_spread,                      — 장단기 스프레드 (10Y-3M)
-      gold_1m, oil_1m,                   — 금·유가
-      csi300_1m                          — 중국 CSI300
-    """
-    try:
-        import yfinance as yf
-        raw = yf.download(_MACRO_TRAIN_SYMBOLS, period=period, progress=False, auto_adjust=True)
-        if raw.empty:
-            return pd.DataFrame()
-        close = (
-            raw.xs('Close', level=0, axis=1)
-            if isinstance(raw.columns, pd.MultiIndex)
-            else raw[['Close']].rename(columns={'Close': _MACRO_TRAIN_SYMBOLS[0]})
-        )
-        _idx = pd.to_datetime(close.index)
-        macro = pd.DataFrame(
-            index=_idx.tz_convert(None) if _idx.tz is not None else _idx.tz_localize(None)
-        )
-
-        def _s(sym: str) -> pd.Series:
-            return close[sym] if sym in close.columns else pd.Series(dtype=float, index=macro.index)
-
-        vix = _s('^VIX')
-        macro['vix_level']     = vix.values
-        macro['vix_change_5d'] = vix.pct_change(5, fill_method=None).values
-        macro['sp500_1m']      = _s('^GSPC').pct_change(20, fill_method=None).values
-        macro['nasdaq_1m']     = _s('^IXIC').pct_change(20, fill_method=None).values
-
-        tnx = _s('^TNX')
-        irx = _s('^IRX')
-        macro['tnx_level']     = tnx.values
-        macro['tnx_change_1m'] = tnx.diff(20).values
-        macro['yield_spread']  = (tnx - irx).values
-
-        macro['gold_1m']       = _s('GC=F').pct_change(20, fill_method=None).values
-        macro['oil_1m']        = _s('CL=F').pct_change(20, fill_method=None).values
-        macro['csi300_1m']     = _s('000300.SS').pct_change(20, fill_method=None).values
-
-        macro = macro.ffill()
-        loaded = [c for c in macro.columns if macro[c].notna().any()]
-        logger.info(f"  [거시경제] {len(loaded)}/10개 피처 로드 완료 ({len(macro)}일)")
-        return macro
-    except Exception as e:
-        logger.warning(f"  [거시경제] 수집 실패: {e} — macro 피처는 0으로 채워집니다.")
-        return pd.DataFrame()
+    """거시경제 데이터 수집 — provider.fetch_macro_df 에 위임."""
+    return fetch_macro_df(period=period)
 
 
 def _fetch_market_returns(symbol: str, period: str) -> pd.DataFrame:
-    """시장 지수의 롤링 수익률 DataFrame 반환 (시장 상대강도 피처 계산용).
-
-    FDR(KS11) 실패 시 yfinance ^KS11 로 폴백.
-    """
-    try:
-        raw = data_provider.get_ohlcv(symbol, period=period)
-        if not raw.empty:
-            mkt = pd.DataFrame(index=raw.index)
-            mkt['return_1m'] = raw['close'].pct_change(20)
-            mkt['return_3m'] = raw['close'].pct_change(60)
-            logger.info(f"  [시장] {symbol} 수익률 데이터 {len(mkt)}개 로드 완료")
-            return mkt
-        logger.warning(f"  [시장] {symbol} FDR 빈 응답 — yfinance 폴백 시도")
-    except Exception as e:
-        logger.warning(f"  [시장] {symbol} FDR 로드 실패: {e}")
-
-    # ── yfinance 폴백 ─────────────────────────────────────────
-    yf_map = {'KS11': '^KS11', 'KQ11': '^KQ11'}
-    yf_sym = yf_map.get(symbol)
-    if yf_sym:
-        try:
-            import yfinance as yf
-            raw = yf.download(yf_sym, period=period, progress=False)
-            if not raw.empty:
-                close = raw.xs('Close', level=0, axis=1).iloc[:, 0] \
-                    if isinstance(raw.columns, pd.MultiIndex) else raw['Close']
-                close.index = pd.to_datetime(close.index).tz_localize(None)
-                mkt = pd.DataFrame(index=close.index)
-                mkt['return_1m'] = close.pct_change(20)
-                mkt['return_3m'] = close.pct_change(60)
-                logger.info(f"  [시장] {yf_sym} (yfinance 폴백) {len(mkt)}개 로드 완료")
-                return mkt
-        except Exception as e2:
-            logger.warning(f"  [시장] {yf_sym} yfinance 폴백도 실패: {e2}")
-    return pd.DataFrame()
+    """시장 지수 롤링 수익률 — provider.fetch_market_df 에 위임."""
+    return fetch_market_df(symbol=symbol, period=period)
 
 
 
@@ -618,6 +534,147 @@ def fetch_train_test_samples(
     return df_train, df_test, tcn_stock_data
 
 
+def _load_effective_configs() -> Dict[str, dict]:
+    """MODEL_CONFIGS 를 deepcopy 후 PARAMS_DIR 오버라이드 파일을 병합해 반환.
+
+    원본 MODULE 레벨 MODEL_CONFIGS 는 변경하지 않음.
+    """
+    import copy as _copy
+    effective: Dict[str, dict] = {}
+    for _name, _cfg in MODEL_CONFIGS.items():
+        _merged = _copy.deepcopy(_cfg)
+        _override_path = PARAMS_DIR / f"{_name}_overrides.json"
+        if _override_path.exists():
+            try:
+                with open(_override_path, encoding="utf-8") as _f:
+                    _ov = json.load(_f)
+                _merged['params'].update(_ov)
+                logger.info(f"[override] {_name} 파라미터 오버라이드 적용: {_ov}")
+            except Exception as _e:
+                logger.warning(f"[override] {_name} 오버라이드 로드 실패 — 기본값 사용: {_e}")
+        effective[_name] = _merged
+    return effective
+
+
+def _walk_forward_cv(
+    df_train: pd.DataFrame,
+    feat_names: List[str],
+    cfg: dict,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    unique_dates: list,
+    future_days: int,
+) -> Tuple[List[float], List[float]]:
+    """Walk-Forward CV (롤링 윈도우, Purging 적용) → (cv_aucs, oof_preds).
+
+    검증 윈도우: 20거래일(≈1개월), 스텝: 10거래일 (overlapping)
+    최소 학습 기간: max(전체 날짜 60%, 120일) — 초반 fold AUC 신뢰도 확보
+    VAL_STEP=10: fold 수 2배(≈24→48) — CV AUC 신뢰도 향상 (Purging으로 leakage 방지)
+    """
+    VAL_WINDOW  = 20
+    VAL_STEP    = 10
+    min_train_n = max(int(len(unique_dates) * 0.6), 120)
+    is_ranker   = cfg.get('is_ranker', False)
+    cv_aucs:   List[float] = []
+    oof_preds: List[float] = []
+    start_idx = min_train_n
+    while start_idx + VAL_WINDOW <= len(unique_dates):
+        end_idx        = min(start_idx + VAL_WINDOW, len(unique_dates))
+        purge_boundary = start_idx - 2 * future_days
+        tr_dates_set   = {unique_dates[i] for i in range(max(0, purge_boundary))}
+        val_dates_set  = {unique_dates[i] for i in range(start_idx, end_idx)}
+        tr_mask  = df_train.index.isin(tr_dates_set)
+        val_mask = df_train.index.isin(val_dates_set)
+        if tr_mask.sum() < 10 or val_mask.sum() < 10:
+            start_idx += VAL_STEP
+            continue
+        if is_ranker:
+            fold_tr  = df_train[tr_mask].sort_index()
+            fold_val = df_train[val_mask].sort_index()
+            cv_sc    = StandardScaler()
+            cv_m     = cfg['class'](**cfg['params'])
+            X_cv_tr  = cv_sc.fit_transform(fold_tr[feat_names].values)
+            X_cv_val = cv_sc.transform(fold_val[feat_names].values)
+            g_cv_tr  = fold_tr.groupby(fold_tr.index).size().values
+            cv_m.fit(X_cv_tr, fold_tr['target'].values, group=g_cv_tr)
+            cv_scores = cv_m.predict(X_cv_val)
+            oof_preds.extend(cv_scores.tolist())
+            cv_aucs.append(roc_auc_score(fold_val['target'].values, cv_scores))
+        else:
+            cv_sc    = StandardScaler()
+            cv_m     = cfg['class'](**cfg['params'])
+            X_cv_tr  = pd.DataFrame(cv_sc.fit_transform(X_train[tr_mask]), columns=feat_names)
+            X_cv_val = pd.DataFrame(cv_sc.transform(X_train[val_mask]),    columns=feat_names)
+            cv_m.fit(X_cv_tr, y_train[tr_mask])
+            cv_p = cv_m.predict_proba(X_cv_val)[:, 1]
+            oof_preds.extend(cv_p.tolist())
+            cv_aucs.append(roc_auc_score(y_train[val_mask], cv_p))
+        start_idx += VAL_STEP
+    return cv_aucs, oof_preds
+
+
+def _train_final_model(
+    cfg: dict,
+    feat_names: List[str],
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    df_train: pd.DataFrame,
+    oof_preds: List[float],
+    t0: float,
+) -> Tuple[Any, StandardScaler, float, float, float, List[float], list]:
+    """최종 모델 학습(전체 학습 세트) 및 평가.
+
+    Returns
+    -------
+    (model, scaler, train_auc, test_auc, test_logloss, calibration_points,
+     feature_importances, duration)
+    """
+    scaler    = StandardScaler()
+    is_ranker = cfg.get('is_ranker', False)
+    if is_ranker:
+        df_tr_sorted = df_train.sort_index()
+        g_tr         = df_tr_sorted.groupby(df_tr_sorted.index).size().values
+        X_tr  = scaler.fit_transform(df_tr_sorted[feat_names].values)
+        X_te  = scaler.transform(X_test)
+        model = cfg['class'](**cfg['params'])
+        model.fit(X_tr, df_tr_sorted['target'].values, group=g_tr)
+        duration     = time.time() - t0
+        train_scores = model.predict(X_tr)
+        test_scores  = model.predict(X_te)
+        _cal_src = oof_preds if len(oof_preds) >= 101 else train_scores.tolist()
+        calibration_points = np.percentile(_cal_src, np.arange(0, 101)).tolist()
+        train_auc    = roc_auc_score(df_tr_sorted['target'].values, train_scores)
+        test_auc     = roc_auc_score(y_test, test_scores)
+        test_logloss = float('nan')
+    else:
+        X_tr_arr = scaler.fit_transform(X_train)
+        X_te_arr = scaler.transform(X_test)
+        X_tr  = pd.DataFrame(X_tr_arr, columns=feat_names)
+        X_te  = pd.DataFrame(X_te_arr, columns=feat_names)
+        model = cfg['class'](**cfg['params'])
+        model.fit(X_tr, y_train)
+        duration     = time.time() - t0
+        train_proba  = model.predict_proba(X_tr)[:, 1]
+        test_proba   = model.predict_proba(X_te)[:, 1]
+        _cal_src = oof_preds if len(oof_preds) >= 101 else train_proba.tolist()
+        calibration_points = np.percentile(_cal_src, np.arange(0, 101)).tolist()
+        train_auc    = roc_auc_score(y_train, train_proba)
+        test_auc     = roc_auc_score(y_test,  test_proba)
+        test_logloss = log_loss(y_test, test_proba)
+
+    feature_importances: list = []
+    if hasattr(model, 'feature_importances_') and len(feat_names) == len(model.feature_importances_):
+        fi_pairs = sorted(
+            zip(feat_names, model.feature_importances_.tolist()),
+            key=lambda x: x[1], reverse=True,
+        )
+        feature_importances = [[n, round(v, 6)] for n, v in fi_pairs]
+
+    return model, scaler, train_auc, test_auc, test_logloss, calibration_points, feature_importances, duration
+
+
 def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
                    future_days: int = 10,
                    tcn_stock_data: Optional[dict] = None) -> None:
@@ -646,63 +703,23 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
         X_test = df_test[feat_names].values
         y_test = df_test['target'].values
 
-    pos_rate = y_train.mean()
+    pos_rate     = y_train.mean()
+    unique_dates = sorted(df_train.index.unique())
     logger.info(f"\n기준선 AUC: 0.5000  (랜덤 분류기)")
     logger.info(f"학습 샘플: {len(X_train)}, 검증 샘플: {len(X_test)}, 양성 비율: {pos_rate:.1%}\n")
 
-    # 날짜 목록 (Walk-Forward CV 기준)
-    unique_dates = sorted(df_train.index.unique())
+    effective_configs = _load_effective_configs()
 
     results = []
-    for name, cfg in MODEL_CONFIGS.items():
+    for name, cfg in effective_configs.items():
         logger.info(f"{'─'*40}")
         logger.info(f"  학습 중: {name}")
         t0 = time.time()
 
-        is_ranker = cfg.get('is_ranker', False)
-
-        # ── Walk-Forward CV (롤링 윈도우, Purging 적용) ──────────────────
-        # 검증 윈도우: 20거래일(≈1개월), 스텝: 10거래일 (overlapping)
-        # 최소 학습 기간: max(전체 날짜 60%, 120일) → 초반 fold AUC 신뢰도 확보
-        # VAL_STEP=10: fold 수 2배(≈24→48) → CV AUC 신뢰도 향상 (Purging으로 leakage 방지)
-        VAL_WINDOW  = 20
-        VAL_STEP    = 10
-        min_train_n = max(int(len(unique_dates) * 0.6), 120)
-        cv_aucs    = []
-        oof_preds  = []   # OOF 예측 누적 (calibration용)
-        start_idx  = min_train_n
-        while start_idx + VAL_WINDOW <= len(unique_dates):
-            end_idx         = min(start_idx + VAL_WINDOW, len(unique_dates))
-            purge_boundary  = start_idx - 2 * future_days   # 2× 마진: label이 val 경계 넘어 영향
-            tr_dates_set    = {unique_dates[i] for i in range(max(0, purge_boundary))}
-            val_dates_set   = {unique_dates[i] for i in range(start_idx, end_idx)}
-            tr_mask  = df_train.index.isin(tr_dates_set)
-            val_mask = df_train.index.isin(val_dates_set)
-            if tr_mask.sum() < 10 or val_mask.sum() < 10:
-                start_idx += VAL_STEP
-                continue
-            if is_ranker:
-                fold_tr  = df_train[tr_mask].sort_index()
-                fold_val = df_train[val_mask].sort_index()
-                cv_sc    = StandardScaler()
-                cv_m     = cfg['class'](**cfg['params'])
-                X_cv_tr  = cv_sc.fit_transform(fold_tr[feat_names].values)
-                X_cv_val = cv_sc.transform(fold_val[feat_names].values)
-                g_cv_tr  = fold_tr.groupby(fold_tr.index).size().values
-                cv_m.fit(X_cv_tr, fold_tr['target'].values, group=g_cv_tr)
-                cv_scores = cv_m.predict(X_cv_val)
-                oof_preds.extend(cv_scores.tolist())
-                cv_aucs.append(roc_auc_score(fold_val['target'].values, cv_scores))
-            else:
-                cv_sc    = StandardScaler()
-                cv_m     = cfg['class'](**cfg['params'])
-                X_cv_tr  = pd.DataFrame(cv_sc.fit_transform(X_train[tr_mask]), columns=feat_names)
-                X_cv_val = pd.DataFrame(cv_sc.transform(X_train[val_mask]),    columns=feat_names)
-                cv_m.fit(X_cv_tr, y_train[tr_mask])
-                cv_p  = cv_m.predict_proba(X_cv_val)[:, 1]
-                oof_preds.extend(cv_p.tolist())
-                cv_aucs.append(roc_auc_score(y_train[val_mask], cv_p))
-            start_idx += VAL_STEP
+        # ── Walk-Forward CV ───────────────────────────────────────────────
+        cv_aucs, oof_preds = _walk_forward_cv(
+            df_train, feat_names, cfg, X_train, y_train, unique_dates, future_days
+        )
         n_folds = len(cv_aucs)
         cv_mean = float(np.mean(cv_aucs)) if cv_aucs else float('nan')
         cv_std  = float(np.std(cv_aucs))  if cv_aucs else float('nan')
@@ -711,57 +728,18 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
         else:
             logger.warning("  CV AUC (Walk-Forward): N/A (유효 fold 없음)")
 
-        # ── 최종 모델 학습 (전체 학습 세트 사용) ─────────────────────────────
-        scaler = StandardScaler()
-        if is_ranker:
-            df_tr_sorted = df_train.sort_index()
-            g_tr     = df_tr_sorted.groupby(df_tr_sorted.index).size().values
-            X_tr  = scaler.fit_transform(df_tr_sorted[feat_names].values)
-            X_te  = scaler.transform(X_test)
-            model = cfg['class'](**cfg['params'])
-            model.fit(X_tr, df_tr_sorted['target'].values, group=g_tr)
-            duration = time.time() - t0
-            train_scores = model.predict(X_tr)
-            test_scores  = model.predict(X_te)
-            # OOF가 충분하면 OOF 기반 캘리브레이션 사용.
-            # 폴백은 test_scores 아닌 train_scores 사용 — test set 분포 편향 방지
-            _cal_src = oof_preds if len(oof_preds) >= 101 else train_scores.tolist()
-            calibration_points = np.percentile(_cal_src, np.arange(0, 101)).tolist()
-            train_auc    = roc_auc_score(df_tr_sorted['target'].values, train_scores)
-            test_auc     = roc_auc_score(y_test, test_scores)
-            test_logloss = float('nan')
-        else:
-            X_tr_arr = scaler.fit_transform(X_train)
-            X_te_arr = scaler.transform(X_test)
-            X_tr  = pd.DataFrame(X_tr_arr, columns=feat_names)
-            X_te  = pd.DataFrame(X_te_arr, columns=feat_names)
-            model = cfg['class'](**cfg['params'])
-            model.fit(X_tr, y_train)
-            duration = time.time() - t0
-            train_proba  = model.predict_proba(X_tr)[:, 1]
-            test_proba   = model.predict_proba(X_te)[:, 1]
-            # OOF가 충분하면 OOF 기반 캘리브레이션 사용.
-            # 폴백은 test_proba 아닌 train_proba 사용 — test set 분포 편향 방지
-            _cal_src = oof_preds if len(oof_preds) >= 101 else train_proba.tolist()
-            calibration_points = np.percentile(_cal_src, np.arange(0, 101)).tolist()
-            train_auc    = roc_auc_score(y_train, train_proba)
-            test_auc     = roc_auc_score(y_test,  test_proba)
-            test_logloss = log_loss(y_test, test_proba)
+        # ── 최종 모델 학습 ────────────────────────────────────────────────
+        model, scaler, train_auc, test_auc, test_logloss, calibration_points, \
+            feature_importances, duration = _train_final_model(
+                cfg, feat_names, X_train, y_train, X_test, y_test, df_train, oof_preds, t0
+            )
         overfit_gap  = round(train_auc - test_auc, 4)
+        quality_pass = bool(test_auc >= MIN_MODEL_AUC)
 
         logger.info(f"  AUC : {test_auc:.4f}  (학습 AUC: {train_auc:.4f}  과적합 gap: {overfit_gap:.4f})")
         if not np.isnan(test_logloss):
             logger.info(f"  LogLoss: {test_logloss:.4f}")
         logger.info(f"  소요: {duration:.1f}초")
-
-        model_path  = MODEL_DIR / f"{name}_model.pkl"
-        scaler_path = MODEL_DIR / f"{name}_scaler.pkl"
-        joblib.dump(model,  model_path)
-        joblib.dump(scaler, scaler_path)
-        logger.info(f"  저장: {model_path}")
-        logger.info(f"  저장: {scaler_path}")
-
-        quality_pass = bool(test_auc >= MIN_MODEL_AUC)
         if quality_pass:
             logger.info(f"  ✅ 품질 게이트 통과 (test_auc={test_auc:.4f} ≥ {MIN_MODEL_AUC})")
         else:
@@ -769,25 +747,25 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
                 f"  ⚠️  품질 게이트 미달 (test_auc={test_auc:.4f} < {MIN_MODEL_AUC}) "
                 f"— 저장은 하지만 예측 시 tech_score 폴백이 사용됩니다."
             )
-
-        # Feature importance 추출
-        feature_importances = []
-        if hasattr(model, 'feature_importances_') and len(feat_names) == len(model.feature_importances_):
-            fi_pairs = sorted(
-                zip(feat_names, model.feature_importances_.tolist()),
-                key=lambda x: x[1], reverse=True,
-            )
-            feature_importances = [[n, round(v, 6)] for n, v in fi_pairs]
-            top5 = ', '.join(f"{n}({v:.3f})" for n, v in fi_pairs[:5])
+        if feature_importances:
+            top5 = ', '.join(f"{n}({v:.3f})" for n, v in feature_importances[:5])
             logger.info(f"  Top-5 피처: {top5}")
 
+        # ── 아티팩트 저장 ─────────────────────────────────────────────────
+        model_path  = MODEL_DIR / f"{name}_model.pkl"
+        scaler_path = MODEL_DIR / f"{name}_scaler.pkl"
+        joblib.dump(model,  model_path)
+        joblib.dump(scaler, scaler_path)
+        logger.info(f"  저장: {model_path}")
+        logger.info(f"  저장: {scaler_path}")
+
         saved_at = datetime.now()
-        version = f"{name}_v{saved_at.strftime('%Y%m%d_%H%M%S')}"
+        version  = f"{name}_v{saved_at.strftime('%Y%m%d_%H%M%S')}"
         meta = {
-            "parameters": {k: v for k, v in cfg['params'].items()
-                           if k not in ('random_state', 'n_jobs', 'verbosity',
-                                        'use_label_encoder', 'eval_metric')},
-            "model_type":          "ranker" if is_ranker else "binary_classifier",
+            "parameters":          {k: v for k, v in cfg['params'].items()
+                                    if k not in ('random_state', 'n_jobs', 'verbosity',
+                                                 'use_label_encoder', 'eval_metric')},
+            "model_type":          "ranker" if cfg.get('is_ranker') else "binary_classifier",
             "target_definition":   (
                 f"top {int((1-TOP_K_PERCENTILE)*100)}% / "
                 f"bottom {int(BOTTOM_K_PERCENTILE*100)}% return in {future_days}d (neutral zone)"
@@ -797,8 +775,8 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
             "cv_auc_mean":         round(cv_mean, 4) if not np.isnan(cv_mean) else None,
             "cv_auc_std":          round(cv_std,  4) if not np.isnan(cv_std)  else None,
             "purging_days":        future_days,
-            "train_auc":           round(train_auc,   4),
-            "test_auc":            round(test_auc,    4),
+            "train_auc":           round(train_auc,    4),
+            "test_auc":            round(test_auc,     4),
             "test_logloss":        round(test_logloss, 4) if not np.isnan(test_logloss) else None,
             "overfit_gap":         overfit_gap,
             "quality_pass":        quality_pass,
@@ -814,6 +792,7 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
 
         results.append((name, test_auc, cv_mean, train_auc, quality_pass))
 
+    # ── 요약 출력 ─────────────────────────────────────────────────────────
     logger.info(f"\n{'═'*60}")
     logger.info("  학습 완료 요약  (이진 분류 / AUC-ROC, Walk-Forward CV)")
     logger.info(f"{'─'*60}")
@@ -838,7 +817,7 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
         )
         if tcn_result is not None:
             _tcn.save_tcn(tcn_result, MODEL_DIR, PARAMS_DIR)
-            qmark = "✅" if tcn_result["quality_pass"] else "⚠️ "
+            qmark  = "✅" if tcn_result["quality_pass"] else "⚠️ "
             cv_str = f"{tcn_result['cv_auc_mean']:.4f}" if tcn_result["cv_auc_mean"] else "N/A"
             logger.info(
                 f"  {'tcn':<22} {tcn_result['test_auc']:>9.4f} {cv_str:>9} "

@@ -403,3 +403,16 @@ class FundamentalProvider:
 
 
 fundamental_provider = FundamentalProvider()
+
+
+def calc_roe_avg(f: dict) -> 'Optional[float]':
+    """ROE 2개년 평균 반환 (value/quality 스크리너 공용).
+
+    roe_prev 가 없으면 roe(당해) 단일 값 반환.
+    두 값 모두 None 이면 None 반환.
+    """
+    roe_cur  = f.get("roe")
+    roe_prev = f.get("roe_prev")
+    if roe_cur is not None and roe_prev is not None:
+        return round((roe_cur + roe_prev) / 2, 1)
+    return roe_cur

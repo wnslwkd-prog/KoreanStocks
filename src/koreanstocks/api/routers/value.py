@@ -1,10 +1,10 @@
 """가치주 스크리너 API 라우터"""
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from koreanstocks.core.engine.value_screener import value_screener
+from koreanstocks.api.dependencies import get_value_screener
+from koreanstocks.core.engine.value_screener import ValueScreener
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["value"])
@@ -20,6 +20,7 @@ async def get_value_stocks(
     revenue_yoy_min: float = Query(-15.0, description="매출 YoY 하한 (%)"),
     f_score_min: int = Query(4, description="Piotroski F-Score 최소값 (0~9)"),
     candidate_limit: int = Query(200, description="시가총액 상위 탐색 종목 수 (100~500)"),
+    screener: ValueScreener = Depends(get_value_screener),
 ):
     """
     펀더멘털 기반 가치주 스크리닝.
@@ -31,7 +32,7 @@ async def get_value_stocks(
     - **f_score**: 간소화 Piotroski F-Score (0~9, 높을수록 재무 건전)
     """
     try:
-        results = value_screener.screen(
+        results = screener.screen(
             market=market,
             per_max=per_max,
             pbr_max=pbr_max,
@@ -52,6 +53,6 @@ async def get_value_stocks(
 
 
 @router.get("/value_stocks/filters")
-async def get_value_filters():
+async def get_value_filters(screener: ValueScreener = Depends(get_value_screener)):
     """현재 기본 필터 임계값 반환."""
-    return value_screener.get_filter_defaults()
+    return screener.get_filter_defaults()

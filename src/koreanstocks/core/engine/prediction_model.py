@@ -9,7 +9,8 @@ from typing import Dict, List, Optional, Any
 import json
 
 from koreanstocks.core.config import config
-from koreanstocks.core.constants import MIN_MODEL_AUC
+from koreanstocks.core.constants import MIN_MODEL_AUC, ENSEMBLE_CLF_WEIGHT, ENSEMBLE_RNK_WEIGHT, SOFTMAX_TEMPERATURE
+from koreanstocks.core.data.provider import fetch_macro_df as _fetch_macro_df, fetch_market_df as _fetch_market_df
 from koreanstocks.core.engine.indicators import indicators
 from koreanstocks.core.engine.features import build_features as _build_features, BASE_FEATURE_COLS
 from koreanstocks.core.engine import tcn_model as _tcn
@@ -122,7 +123,7 @@ class StockPredictionModel:
         if len(self.model_weights) > 1:
             _names = list(self.model_weights.keys())
             _raw   = np.array([self.model_weights[n] for n in _names])
-            _exp   = np.exp(_raw * 5.0)
+            _exp   = np.exp(_raw * SOFTMAX_TEMPERATURE)
             _norm  = _exp / _exp.sum()
             for _n, _w in zip(_names, _norm.tolist()):
                 self.model_weights[_n] = float(_w)
@@ -159,115 +160,35 @@ class StockPredictionModel:
         """시장 지수 수익률 DataFrame 반환 (KS11=KOSPI, KQ11=KOSDAQ, 당일 캐싱).
 
         컬럼: return_1m (20d), return_3m (60d) — 인덱스: 날짜
-        FDR Yahoo Finance 경유 (^ 접두사 강제) → 실패 시 yfinance 폴백.
+        실제 수집 로직은 provider.fetch_market_df 에 위임.
         """
         from datetime import date as _date
-        from koreanstocks.core.data.provider import data_provider as _dp
         today = _date.today().isoformat()
         cached = self._market_cache.get(index_symbol, {})
         if cached.get('date') == today and not cached.get('df', pd.DataFrame()).empty:
             return cached['df']
-        # FDR 1차 시도 — '^' 접두사로 Yahoo Finance 경유 강제 (KRX 직접 접근 차단 회피)
-        yf_sym_primary = {'KS11': '^KS11', 'KQ11': '^KQ11'}.get(index_symbol, f'^{index_symbol}')
-        try:
-            raw = _dp.get_ohlcv(yf_sym_primary, period='2y')
-            if not raw.empty:
-                mkt = pd.DataFrame(index=raw.index)
-                mkt['return_1m'] = raw['close'].pct_change(20)
-                mkt['return_3m'] = raw['close'].pct_change(60)
-                self._market_cache[index_symbol] = {'df': mkt, 'date': today}
-                return mkt
-        except Exception as e:
-            logger.warning(f"Failed to fetch {yf_sym_primary} via FDR: {e}")
-        # yfinance 폴백
-        yf_map = {'KS11': '^KS11', 'KQ11': '^KQ11'}
-        yf_sym = yf_map.get(index_symbol)
-        if yf_sym:
-            try:
-                import yfinance as yf
-                raw = yf.download(yf_sym, period='2y', progress=False)
-                if not raw.empty:
-                    close = raw.xs('Close', level=0, axis=1).iloc[:, 0] \
-                        if isinstance(raw.columns, pd.MultiIndex) else raw['Close']
-                    close.index = pd.to_datetime(close.index).tz_localize(None)
-                    mkt = pd.DataFrame(index=close.index)
-                    mkt['return_1m'] = close.pct_change(20)
-                    mkt['return_3m'] = close.pct_change(60)
-                    self._market_cache[index_symbol] = {'df': mkt, 'date': today}
-                    logger.debug(f"Market data ({index_symbol}) loaded via yfinance fallback.")
-                    return mkt
-            except Exception as e2:
-                logger.warning(f"yfinance fallback for {yf_sym} also failed: {e2}")
-        return pd.DataFrame()
-
-    # Phase 1: 확장된 거시 심볼 목록
-    _MACRO_SYMBOLS = ['^VIX', '^GSPC', '^IXIC', '^TNX', '^IRX', 'GC=F', 'CL=F', '000300.SS']
+        mkt = _fetch_market_df(symbol=index_symbol, period='2y')
+        if not mkt.empty:
+            self._market_cache[index_symbol] = {'df': mkt, 'date': today}
+        return mkt
 
     def _get_macro_df(self) -> pd.DataFrame:
         """거시경제 데이터 반환 (당일 캐싱).
 
-        컬럼 (28개 피처 중 거시 10개 소스):
-          vix_level, vix_change_5d,          — VIX 레벨·변화율
-          sp500_1m, nasdaq_1m,               — 미국 증시
-          tnx_level, tnx_change_1m,          — 미국채 10Y 금리
-          yield_spread,                      — 장단기 스프레드 (10Y-3M)
-          gold_1m, oil_1m,                   — 금·유가
-          csi300_1m                          — 중국 CSI300
-        인덱스: 날짜(tz-naive)
+        실제 수집 로직은 provider.fetch_macro_df 에 위임.
+        컬럼: vix_level, vix_change_5d, sp500_1m, nasdaq_1m, tnx_level,
+              tnx_change_1m, yield_spread, gold_1m, oil_1m, csi300_1m
         """
         from datetime import date as _date
         today = _date.today().isoformat()
         cached = self._market_cache.get('__macro__', {})
         if cached.get('date') == today and not cached.get('df', pd.DataFrame()).empty:
             return cached['df']
-        try:
-            import yfinance as yf
-            raw = yf.download(
-                self._MACRO_SYMBOLS, period='2y', progress=False, auto_adjust=True
-            )
-            if not raw.empty:
-                close = (
-                    raw.xs('Close', level=0, axis=1)
-                    if isinstance(raw.columns, pd.MultiIndex)
-                    else raw[['Close']].rename(columns={'Close': self._MACRO_SYMBOLS[0]})
-                )
-                _idx = pd.to_datetime(close.index)
-                macro = pd.DataFrame(
-                    index=_idx.tz_convert(None) if _idx.tz is not None else _idx.tz_localize(None)
-                )
-
-                def _s(sym: str) -> pd.Series:
-                    """심볼 컬럼 안전 조회 — 없으면 NaN 시리즈 반환."""
-                    return close[sym] if sym in close.columns else pd.Series(
-                        dtype=float, index=macro.index
-                    )
-
-                vix = _s('^VIX')
-                macro['vix_level']     = vix.values
-                macro['vix_change_5d'] = vix.pct_change(5, fill_method=None).values
-                macro['sp500_1m']      = _s('^GSPC').pct_change(20, fill_method=None).values
-                macro['nasdaq_1m']     = _s('^IXIC').pct_change(20, fill_method=None).values
-
-                tnx = _s('^TNX')
-                irx = _s('^IRX')
-                macro['tnx_level']     = tnx.values
-                macro['tnx_change_1m'] = tnx.diff(20).values           # 절대 변화 (pp)
-                macro['yield_spread']  = (tnx - irx).values             # 10Y-3M 스프레드
-
-                macro['gold_1m']       = _s('GC=F').pct_change(20, fill_method=None).values
-                macro['oil_1m']        = _s('CL=F').pct_change(20, fill_method=None).values
-                macro['csi300_1m']     = _s('000300.SS').pct_change(20, fill_method=None).values
-
-                macro = macro.ffill()
-                self._market_cache['__macro__'] = {'df': macro, 'date': today}
-                logger.debug(
-                    f"[MacroDF] 수집 완료: {len(macro)}행, "
-                    f"컬럼={list(macro.columns)}"
-                )
-                return macro
-        except Exception as e:
-            logger.warning(f"Macro data fetch failed: {e}")
-        return pd.DataFrame()
+        macro = _fetch_macro_df(period='2y')
+        if not macro.empty:
+            self._market_cache['__macro__'] = {'df': macro, 'date': today}
+            logger.debug(f"[MacroDF] 수집 완료: {len(macro)}행, 컬럼={list(macro.columns)}")
+        return macro
 
     def prepare_features(self, df: pd.DataFrame,
                          market_df: pd.DataFrame = None,
@@ -404,7 +325,7 @@ class StockPredictionModel:
         clf_score = clf_sum / clf_weight if clf_weight > 0 else 50.0
         rnk_score = rnk_sum / rnk_weight if rnk_weight > 0 else clf_score
         if clf_weight > 0 and rnk_weight > 0:
-            ensemble_score = 0.75 * clf_score + 0.25 * rnk_score
+            ensemble_score = ENSEMBLE_CLF_WEIGHT * clf_score + ENSEMBLE_RNK_WEIGHT * rnk_score
         else:
             ensemble_score = clf_score if clf_weight > 0 else rnk_score
         ensemble_score = float(np.clip(ensemble_score, 0.0, 100.0))

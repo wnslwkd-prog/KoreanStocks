@@ -10,6 +10,11 @@ from functools import lru_cache
 import math
 from typing import List, Dict, Optional
 
+# ── HTTP 요청 공통 헤더 ────────────────────────────────────────────────────
+_HEADERS: Dict[str, str] = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
 # ── FDR DataReader daemon-thread 타임아웃 헬퍼 ───────────────────────────
 # daemon=True 스레드를 사용하므로 Python 프로세스 종료 시 atexit가 join()하지 않는다.
 # (non-daemon ThreadPoolExecutor는 타임아웃 후에도 blocking read가 남아 exit hang 유발)
@@ -173,9 +178,8 @@ class StockDataProvider:
             now = datetime.now()
         _empty = pd.DataFrame(columns=['code', 'name', 'market', 'sector', 'industry'])
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-            r = requests.get(url, headers=headers, timeout=15)
+            r = requests.get(url, headers=_HEADERS, timeout=15)
             r.raise_for_status()
             df_raw = pd.read_html(BytesIO(r.content), encoding='euc-kr')[0]
             # 시장 구분: 유가(증권) → KOSPI, 코스닥 → KOSDAQ
@@ -316,13 +320,11 @@ class StockDataProvider:
         import concurrent.futures as _cf
         from bs4 import BeautifulSoup
 
-        _headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
         def _fetch_page(sosok: int, page: int) -> list:
             r = requests.get(
                 'https://finance.naver.com/sise/sise_market_sum.naver',
                 params={'sosok': str(sosok), 'page': str(page)},
-                headers=_headers, timeout=10,
+                headers=_HEADERS, timeout=10,
             )
             soup = BeautifulSoup(r.text, 'html.parser')
             chg_idx, vol_idx = StockDataProvider._naver_col_indices(soup)
@@ -346,8 +348,8 @@ class StockDataProvider:
             return rows
 
         try:
-            kospi_pages  = self._naver_last_page(0, _headers)
-            kosdaq_pages = self._naver_last_page(1, _headers)
+            kospi_pages  = self._naver_last_page(0, _HEADERS)
+            kosdaq_pages = self._naver_last_page(1, _HEADERS)
             tasks = (
                 [(0, p) for p in range(1, kospi_pages  + 1)] +
                 [(1, p) for p in range(1, kosdaq_pages + 1)]
@@ -667,7 +669,6 @@ class StockDataProvider:
         import concurrent.futures as _cf
         from bs4 import BeautifulSoup
 
-        _headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         sosok_list = [0, 1] if market == "ALL" else ([0] if market == "KOSPI" else [1])
 
         def _fetch_page(sosok: int, page: int):
@@ -675,7 +676,7 @@ class StockDataProvider:
                 r = requests.get(
                     "https://finance.naver.com/sise/sise_market_sum.naver",
                     params={"sosok": str(sosok), "page": str(page)},
-                    headers=_headers, timeout=10,
+                    headers=_HEADERS, timeout=10,
                 )
                 soup = BeautifulSoup(r.text, "html.parser")
                 table = soup.select_one("table.type_2")
@@ -720,7 +721,7 @@ class StockDataProvider:
             # 페이지 수 파악 후 병렬 수집
             tasks = []
             for sosok in sosok_list:
-                n = self._naver_last_page(sosok, _headers)
+                n = self._naver_last_page(sosok, _HEADERS)
                 tasks += [(sosok, p) for p in range(1, n + 1)]
 
             all_rows: List[dict] = []
@@ -931,3 +932,121 @@ class StockDataProvider:
 
 # Singleton instance
 data_provider = StockDataProvider()
+
+
+# ── 공용 거시경제·시장 데이터 수집 함수 ──────────────────────────────────────
+# trainer.py 와 prediction_model.py 양쪽에서 동일 로직을 중복 구현하고 있었으므로
+# 단일 소스로 통합. 캐싱(당일 인메모리)은 각 호출 측이 담당.
+
+#: 거시경제 yfinance 심볼 목록 (단일 소스 — trainer·prediction_model 공용)
+MACRO_SYMBOLS: List[str] = [
+    '^VIX', '^GSPC', '^IXIC', '^TNX', '^IRX', 'GC=F', 'CL=F', '000300.SS'
+]
+
+
+def fetch_macro_df(period: str = '2y') -> pd.DataFrame:
+    """거시경제 데이터 수집 및 10개 피처 DataFrame 반환 (캐싱 없음).
+
+    trainer.py·prediction_model.py 공용 단일 소스 구현.
+    캐싱이 필요한 호출 측(prediction_model)은 반환값을 직접 캐싱한다.
+
+    Returns
+    -------
+    DataFrame
+        인덱스: 날짜(tz-naive), 컬럼: vix_level, vix_change_5d, sp500_1m,
+        nasdaq_1m, tnx_level, tnx_change_1m, yield_spread, gold_1m, oil_1m, csi300_1m
+        수집 실패 시 빈 DataFrame.
+    """
+    _log = logging.getLogger(__name__)
+    try:
+        import yfinance as yf
+        raw = yf.download(MACRO_SYMBOLS, period=period, progress=False, auto_adjust=True)
+        if raw.empty:
+            return pd.DataFrame()
+        close = (
+            raw.xs('Close', level=0, axis=1)
+            if isinstance(raw.columns, pd.MultiIndex)
+            else raw[['Close']].rename(columns={'Close': MACRO_SYMBOLS[0]})
+        )
+        _idx = pd.to_datetime(close.index)
+        macro = pd.DataFrame(
+            index=_idx.tz_convert(None) if _idx.tz is not None else _idx.tz_localize(None)
+        )
+
+        def _s(sym: str) -> 'pd.Series':
+            return close[sym] if sym in close.columns else pd.Series(dtype=float, index=macro.index)
+
+        vix = _s('^VIX')
+        macro['vix_level']     = vix.values
+        macro['vix_change_5d'] = vix.pct_change(5, fill_method=None).values
+        macro['sp500_1m']      = _s('^GSPC').pct_change(20, fill_method=None).values
+        macro['nasdaq_1m']     = _s('^IXIC').pct_change(20, fill_method=None).values
+
+        tnx = _s('^TNX')
+        irx = _s('^IRX')
+        macro['tnx_level']     = tnx.values
+        macro['tnx_change_1m'] = tnx.diff(20).values
+        macro['yield_spread']  = (tnx - irx).values
+
+        macro['gold_1m']   = _s('GC=F').pct_change(20, fill_method=None).values
+        macro['oil_1m']    = _s('CL=F').pct_change(20, fill_method=None).values
+        macro['csi300_1m'] = _s('000300.SS').pct_change(20, fill_method=None).values
+
+        macro = macro.ffill()
+        loaded = [c for c in macro.columns if macro[c].notna().any()]
+        _log.info(f"  [거시경제] {len(loaded)}/10개 피처 로드 완료 ({len(macro)}일)")
+        return macro
+    except Exception as e:
+        _log.warning(f"  [거시경제] 수집 실패: {e} — macro 피처는 0으로 채워집니다.")
+        return pd.DataFrame()
+
+
+def fetch_market_df(symbol: str = 'KS11', period: str = '2y') -> pd.DataFrame:
+    """시장 지수 롤링 수익률 DataFrame 반환 (캐싱 없음).
+
+    trainer.py·prediction_model.py 공용 단일 소스 구현.
+
+    Parameters
+    ----------
+    symbol : FDR 심볼 (KS11=KOSPI, KQ11=KOSDAQ). '^' 접두사 자동 처리.
+    period : 수집 기간 (예: '2y', '3y')
+
+    Returns
+    -------
+    DataFrame
+        컬럼: return_1m (20d), return_3m (60d). 수집 실패 시 빈 DataFrame.
+    """
+    _log = logging.getLogger(__name__)
+    # FDR 경유 Yahoo Finance — '^' 접두사로 KRX 직접 접근 차단 회피
+    yf_sym = f'^{symbol}' if not symbol.startswith('^') else symbol
+    try:
+        raw = data_provider.get_ohlcv(yf_sym, period=period)
+        if not raw.empty:
+            mkt = pd.DataFrame(index=raw.index)
+            mkt['return_1m'] = raw['close'].pct_change(20)
+            mkt['return_3m'] = raw['close'].pct_change(60)
+            _log.info(f"  [시장] {symbol} 수익률 {len(mkt)}개 로드 완료")
+            return mkt
+        _log.warning(f"  [시장] {symbol} FDR 빈 응답 — yfinance 폴백 시도")
+    except Exception as e:
+        _log.warning(f"  [시장] {symbol} FDR 로드 실패: {e}")
+
+    # yfinance 직접 폴백
+    try:
+        import yfinance as yf
+        raw = yf.download(yf_sym, period=period, progress=False)
+        if not raw.empty:
+            close = (
+                raw.xs('Close', level=0, axis=1).iloc[:, 0]
+                if isinstance(raw.columns, pd.MultiIndex)
+                else raw['Close']
+            )
+            close.index = pd.to_datetime(close.index).tz_localize(None)
+            mkt = pd.DataFrame(index=close.index)
+            mkt['return_1m'] = close.pct_change(20)
+            mkt['return_3m'] = close.pct_change(60)
+            _log.info(f"  [시장] {yf_sym} (yfinance 폴백) {len(mkt)}개 로드 완료")
+            return mkt
+    except Exception as e2:
+        _log.warning(f"  [시장] {yf_sym} yfinance 폴백도 실패: {e2}")
+    return pd.DataFrame()

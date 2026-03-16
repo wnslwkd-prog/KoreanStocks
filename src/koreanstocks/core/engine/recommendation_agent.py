@@ -11,6 +11,7 @@ from koreanstocks.core.data.database import db_manager
 from koreanstocks.core.constants import (
     BUCKET_DEFAULT, BUCKET_LABELS, BUCKET_RATIOS as _BUCKET_RATIOS,
     calc_composite_score_from_dict,
+    MAX_ANALYSIS_WORKERS, REGIME_SCORE_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,7 @@ class RecommendationAgent:
         # 종목 수 × 단종목 소요 추정(30s) / workers + 여유 = max(120, n*3) 초
         _global_timeout = max(120, len(candidates) * 3)
         results: List[Dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=MAX_ANALYSIS_WORKERS) as executor:
             futures = {
                 executor.submit(self._analyze_candidate, code, nm): code
                 for code, nm in candidates
@@ -263,9 +264,8 @@ class RecommendationAgent:
         macro_ctx         = macro_news_agent.get_macro_context()
         regime            = macro_ctx.get("macro_regime", "uncertain")
 
-        # 레짐별 composite_score 최소 임계값
-        _REGIME_THRESHOLD = {"risk_on": 45.0, "uncertain": 50.0, "risk_off": 57.0}
-        threshold         = _REGIME_THRESHOLD.get(regime, 50.0)
+        # 레짐별 composite_score 최소 임계값 (constants.py 단일 소스)
+        threshold = REGIME_SCORE_THRESHOLD.get(regime, 50.0)
         pre_n             = len(results)
         pre_filter_results = results  # fallback 복원용 — 필터 전에 반드시 저장
         results           = [r for r in results if _composite_score(r) >= threshold]

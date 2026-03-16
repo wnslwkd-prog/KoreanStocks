@@ -20,8 +20,9 @@ import logging
 from datetime import date as _date
 from typing import Dict, List, Optional, Tuple
 
-from koreanstocks.core.data.fundamental_provider import fundamental_provider
+from koreanstocks.core.data.fundamental_provider import fundamental_provider, calc_roe_avg
 from koreanstocks.core.data.provider import data_provider
+from koreanstocks.core.constants import MAX_SCREEN_WORKERS
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +311,7 @@ class ValueScreener:
         logger.info(f"[VALUE] 후보 {len(candidates)}종목 펀더멘털 수집 중...")
 
         # 2. 펀더멘털 병렬 수집
-        fund_map = fundamental_provider.get_fundamentals_batch(candidates, max_workers=15)
+        fund_map = fundamental_provider.get_fundamentals_batch(candidates, max_workers=MAX_SCREEN_WORKERS)
 
         # 3. 필터 + 점수 산출
         passed: List[Dict] = []
@@ -322,13 +323,8 @@ class ValueScreener:
 
             per    = f.get("per")
             pbr    = f.get("pbr")
-            # ROE 2개년 평균 (지속성 반영 — quality_screener와 동일 방식)
-            roe_cur  = f.get("roe")
-            roe_prev = f.get("roe_prev")
-            if roe_cur is not None and roe_prev is not None:
-                roe = round((roe_cur + roe_prev) / 2, 1)
-            else:
-                roe = roe_cur
+            roe_cur = f.get("roe")
+            roe     = calc_roe_avg(f)   # ROE 2개년 평균 (지속성 반영)
             debt   = f.get("debt_ratio")
             revyoy = f.get("revenue_yoy")
             op_pos = f.get("op_income_positive", False)

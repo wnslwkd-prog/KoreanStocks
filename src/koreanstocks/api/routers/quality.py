@@ -1,9 +1,10 @@
 """우량주 스크리너 API 라우터"""
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from koreanstocks.core.engine.quality_screener import quality_screener
+from koreanstocks.api.dependencies import get_quality_screener
+from koreanstocks.core.engine.quality_screener import QualityScreener
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["quality"])
@@ -18,6 +19,7 @@ async def get_quality_stocks(
     debt_max: float = Query(100.0, description="부채비율 상한 (%)"),
     pbr_max: float = Query(6.0, description="PBR 상한"),
     candidate_limit: int = Query(200, description="시가총액 상위 탐색 종목 수 (100~500)"),
+    screener: QualityScreener = Depends(get_quality_screener),
 ):
     """
     펀더멘털 기반 우량주 스크리닝.
@@ -29,7 +31,7 @@ async def get_quality_stocks(
     - PER 상한 없음 — 비싸도 좋은 기업이면 포함 (가치주 스크리너와의 핵심 차이)
     """
     try:
-        results = quality_screener.screen(
+        results = screener.screen(
             market=market,
             roe_min=roe_min,
             op_margin_min=op_margin_min,
@@ -48,6 +50,6 @@ async def get_quality_stocks(
 
 
 @router.get("/quality_stocks/filters")
-async def get_quality_filters():
+async def get_quality_filters(screener: QualityScreener = Depends(get_quality_screener)):
     """현재 기본 필터 임계값 반환."""
-    return quality_screener.get_filter_defaults()
+    return screener.get_filter_defaults()

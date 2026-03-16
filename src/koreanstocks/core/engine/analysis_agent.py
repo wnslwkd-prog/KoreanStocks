@@ -12,6 +12,9 @@ from koreanstocks.core.data.provider import data_provider
 from koreanstocks.core.engine.indicators import indicators
 from koreanstocks.core.data.database import db_manager
 from koreanstocks.core.constants import calc_composite_score
+from koreanstocks.core.engine.news_agent import news_agent
+from koreanstocks.core.engine.prediction_model import prediction_model
+from koreanstocks.core.engine.macro_news_agent import macro_news_agent
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,6 @@ class AnalysisAgent:
         tech_score = float(indicators.get_composite_score(df_with_indicators) or 0)
 
         # 3. 뉴스 감성 분석 (ML 예측보다 먼저 수행하여 블렌딩에 활용)
-        from koreanstocks.core.engine.news_agent import news_agent
         news_res = news_agent.get_sentiment_score(name or code, stock_code=code)
         sentiment_score = float(news_res.get("sentiment_score") or 0)
 
@@ -68,7 +70,6 @@ class AnalysisAgent:
         industry_val = str(_row.iloc[0].get('industry', '') or '') if not _row.empty else ''
 
         # 5. ML 예측 점수 산출 (순수 ML 앙상블; sentiment 블렌딩은 composite 단계에서 일원화)
-        from koreanstocks.core.engine.prediction_model import prediction_model
         ml_res = prediction_model.predict(
             code, df,
             df_with_indicators=df_with_indicators,
@@ -79,7 +80,6 @@ class AnalysisAgent:
         ml_model_count = int(ml_res.get("model_count") or 0)              # 활성 모델 수 (composite 가중치 분기용)
 
         # 5-b. 거시경제 컨텍스트 (Phase 2 & 3) — 일별 캐시로 종목 루프 비용 無
-        from koreanstocks.core.engine.macro_news_agent import macro_news_agent
         macro_ctx       = macro_news_agent.get_macro_context()
         macro_sentiment = float(macro_ctx.get("macro_sentiment_score") or 0)
 
