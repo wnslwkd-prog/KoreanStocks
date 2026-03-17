@@ -2,7 +2,7 @@
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from koreanstocks import VERSION
 from koreanstocks.api.routers import (
@@ -48,7 +48,10 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root():
         """Reveal.js 일일 브리핑"""
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        return FileResponse(
+            str(STATIC_DIR / "index.html"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/dashboard", include_in_schema=False)
     async def dashboard():
@@ -57,6 +60,10 @@ def create_app() -> FastAPI:
             str(STATIC_DIR / "dashboard.html"),
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return Response(status_code=204)
 
     return app
 

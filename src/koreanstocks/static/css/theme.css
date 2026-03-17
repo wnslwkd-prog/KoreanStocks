@@ -176,6 +176,33 @@ a:hover { text-decoration: underline; }
   background: rgba(0, 0, 0, .08);
 }
 
+/* ── 브리핑 외부 링크 버튼 (새 창) ──────────────── */
+.btn-ext-link {
+  background: rgba(0, 0, 0, .45);
+  border: 1px solid rgba(255, 255, 255, .2);
+  color: #e6edf3 !important;
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: .82em;
+  text-decoration: none !important;
+  line-height: 1;
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.btn-ext-link:hover {
+  background: rgba(0, 0, 0, .65);
+  border-color: rgba(255,255,255,.4);
+  text-decoration: none !important;
+}
+:root[data-theme="light"] .btn-ext-link {
+  background: rgba(255, 255, 255, .85);
+  border-color: rgba(0, 0, 0, .18);
+  color: #1f2328 !important;
+}
+:root[data-theme="light"] .btn-ext-link:hover {
+  background: rgba(0, 0, 0, .08);
+}
+
 /* ── 메인 컨테이너 ─────────────────────────────── */
 .main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
 
@@ -662,10 +689,10 @@ select option { background: var(--bg-dark); }
 
 /* ── 표지 / 네비 슬라이드 레이아웃 ──────────── */
 .sl-cover {
-  padding: 40px 48px;
+  padding: 26px 48px 20px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 10px;
 }
 .sl-cover-nav {
   display: flex;
@@ -679,32 +706,31 @@ select option { background: var(--bg-dark); }
 .sl-disclaimer  { font-size: .72em; color: var(--muted); margin: 0; }
 
 /* 시장 지수 카드 행 */
-.sl-mkt-row  { display: flex; gap: 14px; flex-wrap: wrap; }
+.sl-mkt-row  { display: flex; gap: 10px; flex-wrap: wrap; }
 .sl-mkt-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 24px;
-  min-width: 150px;
+  border-radius: 8px;
+  padding: 10px 20px;
+  min-width: 140px;
 }
-.sl-mkt-label { font-size: .74em; color: var(--muted); margin-bottom: 4px; }
-.sl-mkt-val   { font-size: 1.25em; font-weight: 700; }
-.sl-mkt-chg   { font-size: .84em; margin-top: 3px; }
+.sl-mkt-label { font-size: .74em; color: var(--muted); margin-bottom: 2px; }
+.sl-mkt-val   { font-size: 1.1em; font-weight: 700; }
+.sl-mkt-chg   { font-size: .82em; margin-top: 2px; }
 
 /* 네비 카드 */
 .sl-nav-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 20px 28px;
+  border-radius: 8px;
+  padding: 12px 18px;
   text-decoration: none;
-  flex: 1;
   transition: border-color .15s, background .15s;
 }
 .sl-nav-card:hover { border-color: var(--accent); background: var(--bg-hover); text-decoration: none; }
-.sl-nav-icon  { font-size: 1.5em; margin-bottom: 8px; }
-.sl-nav-title { font-size: .95em; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-.sl-nav-desc  { font-size: .78em; color: var(--muted); }
+.sl-nav-icon  { font-size: 1.1em; margin-bottom: 4px; }
+.sl-nav-title { font-size: .9em; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.sl-nav-desc  { font-size: .76em; color: var(--muted); }
 
 /* ── 종목 슬라이드 레이아웃 ──────────────────── */
 .sl-stock { padding: 24px 38px; display: flex; flex-direction: column; gap: 14px; }

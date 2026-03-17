@@ -1842,12 +1842,21 @@ function _renderDataSources(data) {
     sum.error> 0 ? `<span style="color:var(--sell)">❌ 오류 ${sum.error}</span>` : "",
   ].filter(Boolean).join("  ");
 
+  // 요약 + 토글 버튼 (항상 표시)
   let html = `
     <div style="display:flex;justify-content:space-between;align-items:center;
-                margin-bottom:12px;font-size:.82em">
+                margin-bottom:10px;font-size:.82em">
       <div style="display:flex;gap:14px">${sumHtml}</div>
-      <div style="color:var(--muted)">확인: ${esc(checkedAt)}</div>
-    </div>`;
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="color:var(--muted)">확인: ${esc(checkedAt)}</span>
+        <button id="btn-toggle-datasource" class="btn btn-secondary"
+                onclick="toggleDataSourceDetail()"
+                style="font-size:.8em;padding:3px 10px;line-height:1.4">
+          ▼ 상세 보기
+        </button>
+      </div>
+    </div>
+    <div id="datasource-detail" style="display:none">`;
 
   // 카테고리 순서로 그룹핑
   const categoryOrder = [
@@ -1900,7 +1909,17 @@ function _renderDataSources(data) {
     }
   }
 
+  html += `</div>`; // #datasource-detail
   return html;
+}
+
+function toggleDataSourceDetail() {
+  const detail = document.getElementById("datasource-detail");
+  const btn    = document.getElementById("btn-toggle-datasource");
+  if (!detail || !btn) return;
+  const isOpen = detail.style.display !== "none";
+  detail.style.display = isOpen ? "none" : "block";
+  btn.textContent = isOpen ? "▼ 상세 보기" : "▲ 접기";
 }
 
 // ═══════════════════════════════════════════════════════

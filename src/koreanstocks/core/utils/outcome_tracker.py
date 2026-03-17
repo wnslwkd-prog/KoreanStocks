@@ -49,16 +49,33 @@ def _is_correct(action: str, return_pct: float) -> int:
 
 
 def _fetch_ohlcv(code: str, from_date: str, to_date: str) -> pd.DataFrame:
-    """FDR로 OHLCV 조회. 공통 컬럼(close 포함) DataFrame 반환."""
-    try:
-        import FinanceDataReader as fdr
+    """FDR로 OHLCV 조회. 공통 컬럼(close 포함) DataFrame 반환.
+
+    socket.setdefaulttimeout() 은 전역 상태를 변경해 다른 스레드(yfinance 등)에
+    영향을 주므로 사용하지 않는다. 대신 ThreadPoolExecutor + future.result(timeout)
+    으로 스레드 격리 타임아웃을 구현한다.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    import FinanceDataReader as fdr
+
+    def _do_fetch() -> pd.DataFrame:
         df = fdr.DataReader(code, from_date, to_date)
         if df is not None and not df.empty:
             df.index = pd.to_datetime(df.index)
             df.columns = [c.lower() for c in df.columns]
             return df
+        return pd.DataFrame()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_do_fetch)
+    try:
+        return future.result(timeout=15)
+    except FuturesTimeout:
+        logger.warning(f"[{code}] FDR OHLCV 타임아웃 (15s) — 스킵")
     except Exception as e:
         logger.warning(f"[{code}] FDR OHLCV 실패: {e}")
+    finally:
+        executor.shutdown(wait=False)
 
     return pd.DataFrame()
 
@@ -193,6 +210,14 @@ def record_outcomes() -> int:
     Returns:
         새로 업데이트(또는 삽입)된 추천 레코드 수.
     """
+    try:
+        return _record_outcomes_impl()
+    except BaseException as e:
+        logger.error(f"[record_outcomes] 예외 발생 — 백그라운드 작업 종료: {e}", exc_info=True)
+        return 0
+
+
+def _record_outcomes_impl() -> int:
     # target_hit 기능 도입 전 레코드 소급 처리
     _backfill_target_hit()
 

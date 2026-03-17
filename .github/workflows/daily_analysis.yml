@@ -12,7 +12,46 @@ on:
         default: false
 
 jobs:
+  pre_check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+
+    steps:
+      - name: 이중 실행 방지 체크
+        id: decide
+        run: |
+          FORCE_RUN="${{ inputs.force_run || 'false' }}"
+          if [ "$FORCE_RUN" == "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "강제 실행 모드 — 이중 실행 체크 건너뜀"
+            exit 0
+          fi
+
+          TODAY=$(date -u +'%Y-%m-%d')
+          CURRENT_RUN_ID=${{ github.run_id }}
+
+          # 오늘(UTC) 동일 워크플로우에서 이미 성공 완료된 실행이 있는지 확인 (현재 실행 제외)
+          COMPLETED=$(gh run list \
+            --workflow=daily_analysis.yml \
+            --created="$TODAY" \
+            --limit=20 \
+            --json databaseId,conclusion \
+            --jq "[.[] | select(.databaseId != $CURRENT_RUN_ID and .conclusion == \"success\")] | length")
+
+          if [ "$COMPLETED" -gt "0" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "오늘($TODAY UTC) 이미 성공 완료된 실행 존재 → 이번 실행 건너뜁니다."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "오늘($TODAY UTC) 첫 실행 → 분석 진행합니다."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   analyze:
+    needs: pre_check
+    if: needs.pre_check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,18 +113,6 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
               fh.write(f'is_trading_day={result}\n')
           PYEOF
-
-      - name: Notify non-trading day
-        if: steps.check_trading_day.outputs.is_trading_day == 'false'
-        run: |
-          DATE=$(TZ=Asia/Seoul date +'%Y년 %m월 %d일')
-          MSG="📅 ${DATE}은 한국 증시 휴장일입니다.%0A오늘은 AI 종목 추천을 건너뜁니다."
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "text=${MSG}"
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Run daily analysis
         if: steps.check_trading_day.outputs.is_trading_day == 'true'

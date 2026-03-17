@@ -161,7 +161,6 @@ class QualityScreener:
             logger.warning("[QUALITY] 후보 종목 없음 — 스크리닝 중단")
             return []
 
-        candidates = candidates[:candidate_limit]
         stock_list = data_provider.get_stock_list()
         logger.info(f"[QUALITY] 후보 {len(candidates)}종목 펀더멘털 수집 중...")
 

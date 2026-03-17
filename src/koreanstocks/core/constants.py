@@ -54,6 +54,13 @@ _W_TECH_ML_NM    = (0.40, 0.35, 0.25)         # ML만: tech, ml, stock_sent (거
 _W_TECH_NOML     = (0.65, 0.35)               # ML 없음 fallback: tech, stock_sent
 
 
+# ── 가치주 스크리너 정렬 가중치 (단일 소스) ──────────────────────────────────────
+# f_score(0~9)를 0~40점 구간으로 정규화한 뒤 value_score(0~100)와 복합 정렬
+# 합계는 반드시 1.0: FSCORE_WEIGHT + VALUE_SCORE_WEIGHT == 1.0
+FSCORE_WEIGHT: float = 0.40
+VALUE_SCORE_WEIGHT: float = 0.60
+
+
 def calc_composite_score(
     tech_score: float,
     ml_score: float,

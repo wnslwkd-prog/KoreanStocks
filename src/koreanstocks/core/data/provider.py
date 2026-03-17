@@ -15,6 +15,9 @@ _HEADERS: Dict[str, str] = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
+# ── 네이버 금융 시가총액 순위 URL ─────────────────────────────────────────────
+_NAVER_SISE_URL = "https://finance.naver.com/sise/sise_market_sum.naver"
+
 # ── FDR DataReader daemon-thread 타임아웃 헬퍼 ───────────────────────────
 # daemon=True 스레드를 사용하므로 Python 프로세스 종료 시 atexit가 join()하지 않는다.
 # (non-daemon ThreadPoolExecutor는 타임아웃 후에도 blocking read가 남아 exit hang 유발)
@@ -210,7 +213,7 @@ class StockDataProvider:
         from bs4 import BeautifulSoup
         try:
             r = requests.get(
-                'https://finance.naver.com/sise/sise_market_sum.naver',
+                _NAVER_SISE_URL,
                 params={'sosok': str(sosok), 'page': '1'},
                 headers=headers, timeout=10,
             )
@@ -322,7 +325,7 @@ class StockDataProvider:
 
         def _fetch_page(sosok: int, page: int) -> list:
             r = requests.get(
-                'https://finance.naver.com/sise/sise_market_sum.naver',
+                _NAVER_SISE_URL,
                 params={'sosok': str(sosok), 'page': str(page)},
                 headers=_HEADERS, timeout=10,
             )
@@ -674,7 +677,7 @@ class StockDataProvider:
         def _fetch_page(sosok: int, page: int):
             try:
                 r = requests.get(
-                    "https://finance.naver.com/sise/sise_market_sum.naver",
+                    _NAVER_SISE_URL,
                     params={"sosok": str(sosok), "page": str(page)},
                     headers=_HEADERS, timeout=10,
                 )
@@ -960,7 +963,7 @@ def fetch_macro_df(period: str = '2y') -> pd.DataFrame:
     _log = logging.getLogger(__name__)
     try:
         import yfinance as yf
-        raw = yf.download(MACRO_SYMBOLS, period=period, progress=False, auto_adjust=True)
+        raw = yf.download(MACRO_SYMBOLS, period=period, progress=False, auto_adjust=True, threads=False)
         if raw.empty:
             return pd.DataFrame()
         close = (

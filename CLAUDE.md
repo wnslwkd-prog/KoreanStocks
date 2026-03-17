@@ -1,4 +1,4 @@
-# Korean Stocks AI/ML Analysis System `v0.5.3`
+# Korean Stocks AI/ML Analysis System `v0.5.4`
 
 KOSPI·KOSDAQ 종목을 기술적 지표, 머신러닝, 뉴스 감성 분석으로 자동 스크리닝하고 텔레그램 리포트를 발송하는 투자 보조 플랫폼.
 
@@ -210,6 +210,19 @@ DB_PATH=data/storage/stock_analysis.db
 - GitHub Actions 스케줄 변경
 
 ## 📝 변경 이력
+
+### v0.5.4 (2026-03-17) — 기술 부채 해소 · 브리핑 UI 개선 · 서버 안정성 강화
+
+- 🔧 `quality_screener.py`: 이중 슬라이싱 버그 제거 (`get_value_candidates`가 이미 `limit` 적용)
+- 🔧 `prediction_model.py`: 매직 넘버 상수화 (`_MIN_RMSE_FOR_WEIGHT` · `_DEFAULT_MODEL_WEIGHT` · `_MIN_AUC_WEIGHT`) + `_parse_calibration()` 헬퍼 추출 (모델/TCN 중복 캘리브레이션 검증 제거)
+- 🔧 `trainer.py`: `_fetch_stock_base()` 공통 헬퍼 추출 — `_collect_stock_features` / `_collect_stock_tcn` 85% 중복 해소
+- 🔧 `constants.py`: `FSCORE_WEIGHT(0.40)` · `VALUE_SCORE_WEIGHT(0.60)` 추출 — `value_screener` 매직 넘버 제거
+- 🔧 `provider.py`: `_NAVER_SISE_URL` 상수 추가 — 3곳 URL 하드코딩 제거
+- 🐛 `outcome_tracker.py`: `socket.setdefaulttimeout()` → `ThreadPoolExecutor` 격리 타임아웃 교체 + `BaseException` 래퍼 — 서버 크래시 근본 수정
+- 🐛 `app.py`: `/favicon.ico` 404 → 204 No Content · `/` 라우트 `Cache-Control: no-store`
+- ✨ `slides.js` v4: 마지막 슬라이드 "더 알아보기" → "종합 요약" 테이블 (종목·시그널·점수·상승여력·RSI·MACD) · 표지 대시보드 링크 제거
+- ✨ `dashboard.html`: 브리핑·API 링크 `target="_blank"` — 독립 창으로 분리
+- ✨ `.github/workflows`: `pre_check` 잡 추가 — 이중 실행 방지 (scheduled + workflow_dispatch 동일일 중복 차단)
 
 ### v0.5.3 (2026-03-16) — 모델 파라미터 조정 UI 프론트 구현 완성
 

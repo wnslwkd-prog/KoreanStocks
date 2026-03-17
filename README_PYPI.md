@@ -1,6 +1,6 @@
 # 📈 Korean Stocks AI/ML Analysis System
 
-![version](https://img.shields.io/badge/version-0.5.3-blue)
+![version](https://img.shields.io/badge/version-0.5.4-blue)
 ![python](https://img.shields.io/badge/python-3.11~3.13-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -478,7 +478,8 @@ Step 5 — 최종 판단 기준
 sudo apt-get install -y libomp-dev   # Ubuntu / Debian
 # brew install libomp               # macOS
 
-pip install koreanstocks
+pip install koreanstocks             # 기본 설치 (TCN 비활성화)
+pip install "koreanstocks[dl]"       # TCN 딥러닝 앙상블 포함 (~700MB)
 ```
 
 ```bash
@@ -499,11 +500,21 @@ pipx install koreanstocks          # 기본 설치 (TCN 비활성화)
 TCN 딥러닝 앙상블을 활성화하려면 (선택적, ~700MB):
 
 ```bash
-# 방법 A: 처음부터 dl extra 포함 설치
+# 방법 A: 처음부터 dl extra 포함 설치 (권장)
 pipx install "koreanstocks[dl]"
 
 # 방법 B: 이미 설치한 경우 inject
 pipx inject koreanstocks torch
+
+# 방법 C: 이미 설치되어 있고 dl extra를 추가하려면 --force 재설치
+pipx install "koreanstocks[dl]" --force
+```
+
+GPU(CUDA) 환경에서 torch CUDA 버전으로 교체하려면:
+
+```bash
+pipx install koreanstocks
+pipx inject koreanstocks torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
 > **주의**: pipx는 격리 venv를 사용하므로 `pip install koreanstocks[dl]`로는 TCN을 활성화할 수 없습니다. 반드시 위 pipx 방식을 사용하세요.
@@ -520,7 +531,8 @@ conda create -n stocks_env python=3.11
 conda activate stocks_env
 
 sudo apt-get install -y libomp-dev   # Ubuntu/Debian
-pip install -e .                     # editable 설치
+pip install -e .                     # editable 설치 (TCN 비활성화)
+pip install -e ".[dl]"               # TCN 딥러닝 앙상블 포함 (~700MB)
 ```
 
 ---
@@ -753,6 +765,14 @@ KoreanStocks/
 ---
 
 ## 📝 변경 이력
+
+### v0.5.4 (2026-03-17) — 기술 부채 해소 · 브리핑 UI 개선 · 서버 안정성 강화
+
+- 🔧 기술 부채 해소: `quality_screener` 이중 슬라이싱 버그 · `prediction_model` 매직 넘버 상수화 + `_parse_calibration()` 헬퍼 · `trainer` `_fetch_stock_base()` 공통 헬퍼 · `constants` 가중치 상수화 · `provider` URL 상수화
+- 🐛 `outcome_tracker`: 서버 크래시 근본 수정 (소켓 타임아웃 격리 + `BaseException` 래퍼)
+- 🐛 `app.py`: `/favicon.ico` 404 수정 · `Cache-Control: no-store`
+- ✨ 브리핑 슬라이드 마지막 페이지 → 종합 요약 테이블 (시그널·점수·상승여력·RSI·MACD)
+- ✨ 대시보드에서 브리핑·API 새 창 분리, GitHub Actions 이중 실행 방지
 
 ### v0.5.3 (2026-03-16) — 모델 파라미터 조정 UI 프론트 구현 완성
 

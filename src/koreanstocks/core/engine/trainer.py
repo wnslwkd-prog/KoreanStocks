@@ -309,29 +309,50 @@ def _fetch_market_returns(symbol: str, period: str) -> pd.DataFrame:
 
 
 
+def _fetch_stock_base(
+    code: str, period: str, future_days: int,
+    min_len: int = 60,
+    market_df: pd.DataFrame = None,
+    macro_df: pd.DataFrame = None,
+) -> Optional[tuple]:
+    """공통 베이스: OHLCV 수집 → 지표 계산 → 피처 빌드 → 미래 수익률.
+
+    Returns
+    -------
+    (feat_valid, ret_valid, df_ind) 또는 None (데이터 부족 / 오류 시)
+        feat_valid : DataFrame — 인덱스 = feat.index[:-future_days]
+        ret_valid  : Series   — 동일 인덱스, 미래 수익률
+        df_ind     : DataFrame — indicators.calculate_all() 결과 (TCN 불필요, 참고용)
+    """
+    df = data_provider.get_ohlcv(code, period=period)
+    if df is None or df.empty or len(df) < min_len:
+        logger.warning(f"  [{code}] 데이터 부족 ({len(df) if df is not None else 0}행) — 건너뜀")
+        return None
+    df_ind = indicators.calculate_all(df)
+    if df_ind.empty:
+        return None
+    feat = build_features(df_ind, market_df=market_df, macro_df=macro_df)
+    if len(feat) <= future_days:
+        return None
+    close      = df_ind['close'].reindex(feat.index)
+    future_ret = (close.shift(-future_days) - close) / close
+    valid_idx  = feat.index[:-future_days]
+    return feat.loc[valid_idx], future_ret.loc[valid_idx], df_ind
+
+
 def _collect_stock_features(code: str, period: str, future_days: int,
                              market_df: pd.DataFrame = None,
                              macro_df: pd.DataFrame = None) -> pd.DataFrame:
     """단일 종목의 (날짜, 특성, 미래수익률) DataFrame 반환."""
     try:
-        df = data_provider.get_ohlcv(code, period=period)
-        if df is None or df.empty or len(df) < 60:
-            logger.warning(f"  [{code}] 데이터 부족 ({len(df) if df is not None else 0}행) — 건너뜀")
+        base = _fetch_stock_base(code, period, future_days,
+                                 market_df=market_df, macro_df=macro_df)
+        if base is None:
             return pd.DataFrame()
+        feat_valid, ret_valid, _ = base
 
-        df_ind = indicators.calculate_all(df)
-        if df_ind.empty:
-            return pd.DataFrame()
-
-        feat = build_features(df_ind, market_df=market_df, macro_df=macro_df)
-        if len(feat) <= future_days:
-            return pd.DataFrame()
-
-        close      = df_ind['close'].reindex(feat.index)
-        future_ret = (close.shift(-future_days) - close) / close
-        valid_idx  = feat.index[:-future_days]
-        result     = feat.loc[valid_idx].copy()
-        result['raw_return'] = future_ret.loc[valid_idx]
+        result = feat_valid.copy()
+        result['raw_return'] = ret_valid
 
         base_subset = [c for c in BASE_FEATURE_COLS + ['raw_return'] if c in result.columns]
         valid       = result.dropna(subset=base_subset)
@@ -349,27 +370,21 @@ def _collect_stock_tcn(code: str, period: str, future_days: int,
     """TCN용: 단일 종목의 전체 피처 시계열 + 이진 라벨 반환.
 
     Returns:
-        {'features': DataFrame(날짜×피처), 'labels': Series(날짜→0/1)}
+        {'features': DataFrame(날짜×피처), 'raw_return': Series}
         또는 None (데이터 부족 시)
     """
     try:
-        df = data_provider.get_ohlcv(code, period=period)
-        if df is None or df.empty or len(df) < 60:
+        base = _fetch_stock_base(code, period, future_days,
+                                 min_len=60 + _tcn.LOOKBACK,
+                                 market_df=market_df, macro_df=macro_df)
+        if base is None:
             return None
-        df_ind = indicators.calculate_all(df)
-        if df_ind.empty:
-            return None
-        feat = build_features(df_ind, market_df=market_df, macro_df=macro_df)
-        if len(feat) <= future_days + _tcn.LOOKBACK:
+        feat_valid, ret_valid, _ = base
+
+        if len(feat_valid) <= _tcn.LOOKBACK:
             return None
 
-        close      = df_ind['close'].reindex(feat.index)
-        future_ret = (close.shift(-future_days) - close) / close
-        valid_idx  = feat.index[:-future_days]
-        feat_valid = feat.loc[valid_idx]
-        ret_valid  = future_ret.loc[valid_idx]
-
-        feat_cols = [c for c in BASE_FEATURE_COLS if c in feat_valid.columns]
+        feat_cols  = [c for c in BASE_FEATURE_COLS if c in feat_valid.columns]
         feat_clean = feat_valid[feat_cols].dropna()
         ret_align  = ret_valid.reindex(feat_clean.index).dropna()
         feat_clean = feat_clean.reindex(ret_align.index)
@@ -828,7 +843,7 @@ def train_and_save(df_train: pd.DataFrame, df_test: pd.DataFrame,
     elif not _tcn.is_available():
         import sys as _sys
         _in_pipx = "pipx" in _sys.executable or "pipx" in str(getattr(_sys, "prefix", ""))
-        _cmd = "pipx inject koreanstocks torch" if _in_pipx else 'pip install "koreanstocks[dl]"'
+        _cmd = "pipx inject koreanstocks torch" if _in_pipx else 'pip install -e ".[dl]"  또는  pip install "koreanstocks[dl]"'
         logger.info(f"  [TCN] PyTorch 미설치 — 건너뜁니다.  활성화: {_cmd}")
         del _sys, _in_pipx, _cmd
 

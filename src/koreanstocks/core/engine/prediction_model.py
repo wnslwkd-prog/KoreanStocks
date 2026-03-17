@@ -29,6 +29,36 @@ _AUC_WEIGHT_FLOOR = 0.50   # AUC - 0.5가 이 값 이하면 weight=0 처리
 _MIN_MODEL_AUC = MIN_MODEL_AUC  # core/constants.py 단일 소스
 # 하위 호환: 구버전 R² 기반 모델 로드 시 fallback용 (사용 안 함)
 _MIN_MODEL_R2 = 0.0
+# 구버전 회귀 모델의 가중치 계산: 1/max(rmse, _MIN_RMSE_FOR_WEIGHT)
+_MIN_RMSE_FOR_WEIGHT: float = 5.0
+# 메타 파일 없는 모델의 기본 가중치
+_DEFAULT_MODEL_WEIGHT: float = 0.05
+# AUC 기반 가중치의 최소값 (0으로 나누기 방지)
+_MIN_AUC_WEIGHT: float = 1e-6
+
+
+def _parse_calibration(cal: Any, model_name: str) -> Optional[list]:
+    """메타 파일의 calibration 배열을 검증하고 리스트로 반환.
+
+    Parameters
+    ----------
+    cal        : meta.get("calibration") 값 (101-element list or None)
+    model_name : 로그용 모델 이름
+
+    Returns
+    -------
+    list(float) — 유효한 101분위수 배열, 또는 None (유효하지 않을 때)
+    """
+    if not cal or len(cal) != 101:
+        return None
+    try:
+        cal_arr = np.array(cal, dtype=float)
+        if np.all(np.isfinite(cal_arr)) and np.all(np.diff(cal_arr) >= 0):
+            return cal_arr.tolist()
+        logger.warning(f"⚠️  {model_name} calibration 배열 손상 (NaN/Inf 또는 단조 감소) — 캘리브레이션 비활성화")
+    except (ValueError, TypeError) as _e:
+        logger.warning(f"⚠️  {model_name} calibration 파싱 실패: {_e} — 비활성화")
+    return None
 
 
 class StockPredictionModel:
@@ -81,18 +111,11 @@ class StockPredictionModel:
                                 )
                                 continue
                             # AUC 기반 가중치: (AUC - 0.5) 에 비례
-                            self.model_weights[name] = max(auc - _AUC_WEIGHT_FLOOR, 1e-6)
+                            self.model_weights[name] = max(auc - _AUC_WEIGHT_FLOOR, _MIN_AUC_WEIGHT)
                             # 캘리브레이션 배열 로드 (101분위수) — 타입·범위·단조증가 검증
-                            cal = meta.get("calibration")
-                            if cal and len(cal) == 101:
-                                try:
-                                    cal_arr = np.array(cal, dtype=float)
-                                    if np.all(np.isfinite(cal_arr)) and np.all(np.diff(cal_arr) >= 0):
-                                        self.calibrations[name] = cal_arr.tolist()
-                                    else:
-                                        logger.warning(f"⚠️  {name} calibration 배열 손상 (NaN/Inf 또는 단조 감소) — 캘리브레이션 비활성화")
-                                except (ValueError, TypeError) as _cal_err:
-                                    logger.warning(f"⚠️  {name} calibration 파싱 실패: {_cal_err} — 비활성화")
+                            parsed_cal = _parse_calibration(meta.get("calibration"), name)
+                            if parsed_cal is not None:
+                                self.calibrations[name] = parsed_cal
                             label = "ranker" if model_type == "ranker" else "classifier"
                             logger.info(f"✅ Loaded {label}: {name} (auc={auc:.4f}, weight={self.model_weights[name]:.4f})")
                         else:
@@ -102,10 +125,10 @@ class StockPredictionModel:
                             if r2 < _MIN_MODEL_R2:
                                 logger.warning(f"⚠️  {name} 구버전 R² 미달 ({r2:.4f}) — 건너뜀.")
                                 continue
-                            self.model_weights[name] = 1.0 / max(rmse, 5.0)
+                            self.model_weights[name] = 1.0 / max(rmse, _MIN_RMSE_FOR_WEIGHT)
                             logger.info(f"✅ Loaded regressor: {name} (r2={r2:.4f})")
                     else:
-                        self.model_weights[name] = 0.05  # 파라미터 없으면 기본 가중치
+                        self.model_weights[name] = _DEFAULT_MODEL_WEIGHT  # 파라미터 없으면 기본 가중치
 
                     self.models[name]  = loaded_model
                     self.scalers[name] = loaded_scaler
@@ -140,15 +163,10 @@ class StockPredictionModel:
                 auc  = float(meta.get("test_auc", 0.0))
                 if auc >= _MIN_MODEL_AUC:
                     self._tcn_loaded = tcn_loaded
-                    self.model_weights["tcn"] = max(auc - _AUC_WEIGHT_FLOOR, 1e-6)
-                    cal = meta.get("calibration")
-                    if cal and len(cal) == 101:
-                        try:
-                            cal_arr = np.array(cal, dtype=float)
-                            if np.all(np.isfinite(cal_arr)) and np.all(np.diff(cal_arr) >= 0):
-                                self.calibrations["tcn"] = cal_arr.tolist()
-                        except (ValueError, TypeError):
-                            pass
+                    self.model_weights["tcn"] = max(auc - _AUC_WEIGHT_FLOOR, _MIN_AUC_WEIGHT)
+                    parsed_cal = _parse_calibration(meta.get("calibration"), "tcn")
+                    if parsed_cal is not None:
+                        self.calibrations["tcn"] = parsed_cal
                     logger.info(f"✅ Loaded classifier: tcn (auc={auc:.4f})")
                 else:
                     logger.warning(
@@ -233,8 +251,8 @@ class StockPredictionModel:
                 matched = _sl[_sl['code'] == code]
                 if not matched.empty and matched.iloc[0].get('market') == 'KOSDAQ':
                     index_symbol = 'KQ11'
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug(f"market 탐지 실패 ({code}): {_e}")
         market_df = self._get_market_df(index_symbol)
         macro_df  = self._get_macro_df()
         if df_with_indicators is not None:

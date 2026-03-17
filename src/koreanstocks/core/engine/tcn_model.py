@@ -34,14 +34,14 @@ try:
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
     _TORCH_OK = True
-except ImportError:
+except Exception:
     _TORCH_OK = False
     import sys as _sys
     _in_pipx = "pipx" in _sys.executable or "pipx" in str(getattr(_sys, "prefix", ""))
     if _in_pipx:
         _install_cmd = "pipx inject koreanstocks torch"
     else:
-        _install_cmd = 'pip install "koreanstocks[dl]"'
+        _install_cmd = 'pip install -e ".[dl]"  또는  pip install "koreanstocks[dl]"'
     logger.warning(f"PyTorch 미설치 — TCN 모델 비활성화됩니다.  활성화: {_install_cmd}")
     del _sys, _in_pipx, _install_cmd
 

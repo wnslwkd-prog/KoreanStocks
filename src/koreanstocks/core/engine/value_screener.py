@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 from koreanstocks.core.data.fundamental_provider import fundamental_provider, calc_roe_avg
 from koreanstocks.core.data.provider import data_provider
-from koreanstocks.core.constants import MAX_SCREEN_WORKERS
+from koreanstocks.core.constants import MAX_SCREEN_WORKERS, FSCORE_WEIGHT, VALUE_SCORE_WEIGHT
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +413,7 @@ class ValueScreener:
         # 4. 정렬: f_score(40%) + value_score(60%) 복합 점수
         # 튜플 정렬 대신 단일 점수화 — value_score 차이를 충분히 반영
         passed.sort(
-            key=lambda r: r["f_score"] / 9 * 40 + r["value_score"] * 0.60,
+            key=lambda r: r["f_score"] / 9 * (FSCORE_WEIGHT * 100) + r["value_score"] * VALUE_SCORE_WEIGHT,
             reverse=True,
         )
 
