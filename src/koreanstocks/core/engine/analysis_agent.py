@@ -298,6 +298,16 @@ class AnalysisAgent:
             raw_action = _parts[0].rstrip('.') if _parts else 'HOLD'
             result['action'] = raw_action if raw_action in ('BUY', 'HOLD', 'SELL') else 'HOLD'
 
+            # [I-1] 과매수 경고 시 BUY → HOLD 강제 전환
+            # GPT가 weakness에 과매수를 명시했음에도 BUY를 출력하는 모순을 차단.
+            # 성과 분석: 과매수 경고 있음 33% 정답률 vs 경고 없음 71% (SKAI 제거 후에도 동일).
+            _weakness = result.get('weakness', '')
+            _weakness_text = ' '.join(str(w) for w in _weakness) if isinstance(_weakness, list) else str(_weakness)
+            if '과매수' in _weakness_text and result['action'] == 'BUY':
+                result['action'] = 'HOLD'
+                result['action_override'] = 'RSI 과매수 구간 경고 — BUY→HOLD 자동 조정'
+                logger.info(f"[{name}] 과매수 경고로 BUY→HOLD 전환")
+
             # 데이터 정제: target_price를 숫자로 변환
             if 'target_price' in result:
                 try:

@@ -20,6 +20,51 @@ logger = logging.getLogger(__name__)
 _composite_score = calc_composite_score_from_dict
 
 
+# ── 품질 필터 함수 (성과 분석 기반) ─────────────────────────────────────────
+
+
+def _is_volume_overheated(analysis: Dict[str, Any]) -> bool:
+    """거래량 폭증(평균 대비 6배+) 여부.
+
+    성과 분석: 6x+ 종목 정답률 33%, 중앙값 -3.8% → 유입 완료 신호.
+    """
+    stats = analysis.get('stats') or {}
+    avg_vol = stats.get('avg_vol') or 0
+    cur_vol = stats.get('current_vol') or 0
+    if avg_vol <= 0:
+        return False
+    return (cur_vol / avg_vol) >= 6.0
+
+
+def _is_price_overheated(analysis: Dict[str, Any]) -> bool:
+    """당일 급등(5%+) + 강긍정 감성(50+) 동시 조건.
+
+    성과 분석: 이 조합은 재료 소진 신호 — 흥구석유·SK증권 등 대표 실패 케이스.
+    반면 당일 3% 미만 + 감성 30 이하 → 정답률 78%, 중앙값 +9.1%.
+    """
+    change_pct = abs(float(analysis.get('change_pct') or 0))
+    sentiment  = float(analysis.get('sentiment_score') or 0)
+    return change_pct >= 5.0 and sentiment >= 50
+
+
+def _passes_kospi_filter(analysis: Dict[str, Any]) -> bool:
+    """KOSPI 종목에 황금조합 조건 강제 적용.
+
+    성과 분석: KOSPI 전체 정답률 35% vs 황금조합 충족 시 75%.
+    황금조합: 거래량 배율 < 3x, 감성 0~40, 당일 변동 < 3%.
+    KOSDAQ은 조건 없이 통과.
+    """
+    if analysis.get('market') != 'KOSPI':
+        return True
+    stats = analysis.get('stats') or {}
+    avg_vol    = stats.get('avg_vol') or 1
+    cur_vol    = stats.get('current_vol') or 0
+    vol_mult   = (cur_vol / avg_vol) if avg_vol > 0 else 0
+    sentiment  = float(analysis.get('sentiment_score') or 0)
+    change_pct = abs(float(analysis.get('change_pct') or 0))
+    return vol_mult < 3.0 and 0 <= sentiment <= 40 and change_pct < 3.0
+
+
 def _apply_bucket_quota(
     results: List[Dict[str, Any]],
     limit: int,
@@ -280,6 +325,38 @@ class RecommendationAgent:
                 f"레짐 필터({regime}) 후 후보 없음 — 임계값 완화: 전체 {pre_n}종목으로 복원"
             )
             results = pre_filter_results
+
+        # ── 품질 필터 [I-2][I-3][S-2] ───────────────────────────────
+        # 거래량 폭증 / 재료소진 과열 / KOSPI 황금조합 미충족 종목 제거.
+        # 분석 근거: docs/6_PERFORMANCE_IMPROVEMENT.md §5 참조.
+        _pre_quality = len(results)
+        _quality_filtered = [
+            r for r in results
+            if not _is_volume_overheated(r)
+            and not _is_price_overheated(r)
+            and _passes_kospi_filter(r)
+        ]
+        if _quality_filtered:
+            _removed = _pre_quality - len(_quality_filtered)
+            if _removed > 0:
+                logger.info(
+                    f"[품질 필터] {_pre_quality} → {len(_quality_filtered)}종목 "
+                    f"({_removed}건 제외: 거래량폭증·과열·KOSPI조건)"
+                )
+            results = _quality_filtered
+        else:
+            logger.warning("[품질 필터] 결과 없음 — 필터 건너뜀 (전체 유지)")
+
+        # ── 상대 순위 계산 [S-3] ─────────────────────────────────────
+        # 복합점수 절대값은 64~92점에 집중되어 변별력이 낮음.
+        # 세션 내 백분위 순위를 score_percentile 필드에 추가 (표시·정렬 보조용).
+        if results:
+            _all_scores = sorted(_composite_score(r) for r in results)
+            _n = len(_all_scores)
+            for r in results:
+                _cs = _composite_score(r)
+                _rank = sum(1 for s in _all_scores if s <= _cs)
+                r['score_percentile'] = round(_rank / _n * 100)
 
         # ── 4. 버킷 쿼터 + 섹터 다양성으로 최종 선정 ───────────────
         final_recs = _apply_bucket_quota(results, limit)
