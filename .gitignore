@@ -25,7 +25,11 @@ wheels/
 *.egg
 
 # Database
+# *.db 는 일반적으로 제외하되, GitHub Actions가 축적하는 추천 DB는 예외로 추적.
+# 로컬에서 DB 변경이 git status에 나타나지 않게 하려면:
+#   git update-index --skip-worktree data/storage/stock_analysis.db
 *.db
+!data/storage/stock_analysis.db
 
 # OS
 .DS_Store
