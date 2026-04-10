@@ -143,14 +143,28 @@ jobs:
         if: steps.check_trading_day.outputs.is_trading_day == 'true'
         run: sqlite3 data/storage/stock_analysis.db "DELETE FROM watchlist;"
 
-      - name: Commit updated DB to repository
+- name: Commit updated DB to repository
         if: steps.check_trading_day.outputs.is_trading_day == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+
+          # 1. 'latest-data'라는 이름의 빈 브랜치(Orphan)를 임시로 생성합니다.
+          # 이 브랜치는 과거의 어떤 기록도 가지고 있지 않습니다.
+          git checkout --orphan latest-data
+
+          # 2. 현재 폴더의 모든 파일 추적을 해제합니다.
+          git rm -rf . --cached
+
+          # 3. 사용자님의 DB 파일만 강제로 다시 추가합니다.
           git add -f data/storage/stock_analysis.db
-          git diff --staged --quiet || git commit -m "chore: daily DB update $(date +'%Y-%m-%d')"
-          git push || (git pull --rebase origin main && git push)
+
+          # 4. '최신 데이터 업데이트'라는 메시지로 커밋을 생성합니다.
+          git commit -m "chore: update latest stock DB $(date +'%Y-%m-%d')"
+
+          # 5. 원격 저장소의 'data'라는 브랜치로 '강제 푸시(-f)' 합니다.
+          # 이 과정에서 기존의 'data' 브랜치 기록은 사라지고 현재 파일 1개만 남습니다.
+          git push -f origin latest-data:data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
