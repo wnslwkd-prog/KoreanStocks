@@ -165,6 +165,6 @@ jobs:
 
           # 5. 원격 저장소의 'data'라는 브랜치로 '강제 푸시(-f)' 합니다.
           # 이 과정에서 기존의 'data' 브랜치 기록은 사라지고 현재 파일 1개만 남습니다.
-          git push -f origin latest-data:data
+          git push -f origin latest-data:db-data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
